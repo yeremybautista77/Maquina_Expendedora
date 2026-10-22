@@ -79,10 +79,12 @@ Por cada unidad solicitada, se ejecuta una secuencia estrictamente serial para e
 
 ```
 Maquina_Expendedora/
-├── Documentacion/
-│   └── Documentacion Tecnica/
-│       └── documento_de_arquitectura_tecnico.md
+├── Codigo/
 ├── Diseño_electronico/
 ├── Diseño_mecanico/
-└── Codigo/
+├── Documentacion/
+│   ├── Documentacion Tecnica/
+│   │   └── documento_de_arquitectura_tecnico.md
+│   └── Imagenes de manufactura/
+└── Documentacion Proyecto Terminado/
 ```
