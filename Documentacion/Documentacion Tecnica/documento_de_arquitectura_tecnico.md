@@ -1,44 +1,50 @@
-# Documento de Diseño y Arquitectura: Máquina Expendedora Vending ESP32
+# Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
-## 1. Descripción del Proyecto
-Desarrollo de una máquina expendedora automatizada de 6 canales (espirales) de nivel industrial y bajo costo. El sistema utiliza una arquitectura de control distribuida centrada en un microcontrolador ESP32 con pantalla táctil de 4.0 pulgadas. Acepta pagos mediante un validador multimoneda y despacha productos usando motores reductores con retroalimentación mecánica de final de carrera aislado.
+## 1. Plataforma de Desarrollo y Firmware
+El desarrollo del firmware se ejecutará utilizando **ESP-IDF (Espressif IoT Development Framework)**, el estándar industrial para programación de microcontroladores ESP32 en **C nativo**.
+*   **Sistema Operativo en Tiempo Real (FreeRTOS):** Se implementará FreeRTOS para gestionar el sistema mediante tareas concurrentes (Tasks). Esto permite aislar en diferentes hilos la lectura de interrupciones del monedero, el control I2C de los motores y el renderizado de la interfaz gráfica sin bloqueos.
+*   **Control de Versiones:** El código fuente, la documentación y los esquemas se gestionarán a través de un repositorio en **Git/GitHub**.
 
-## 2. Interfaz Gráfica de Usuario (GUI)
-La pantalla de 4.0 pulgadas se utilizará en **orientación vertical**. La interfaz principal consta de:
-* **Matriz de Productos:** 6 espacios, uno por cada carril.
-* **Selector por Producto:** 
-  * Imagen representativa del producto.
-  * Botón menos `[-]` a la izquierda.
-  * Botón más `[+]` a la derecha.
-  * Texto central: `Cantidad: 0`.
-  * *Lógica:* No puede bajar de 0 ni superar el máximo de 10 unidades por selección.
-* **Barra Inferior de Estado y Compra:**
-  * **Indicador de Saldo:** Si el saldo es 0, muestra el texto `"Ingrese monedas"`. Si hay saldo, muestra la cantidad disponible.
-  * **Botón de Acción:** Un botón de `"Confirmar compra"` siempre visible. Al presionarlo, despliega una pantalla secundaria emergente pidiendo al usuario confirmar la selección (`Sí` / `No`).
+## 2. Hardware y Conexiones Principales (ESP32-32E 4.0")
+*   **Pantalla Táctil TFT (4.0 pulgadas):** Actúa como la interfaz gráfica (GUI) e integra el microcontrolador central.
+*   **Módulo Optoacoplador (HiLetgo PC817 - 2 Canales):** Aislamiento galvánico para proteger al ESP32.
+    *   *Entrada (12V):* Señal del monedero (IN1) y GND de la fuente principal de 12V.
+    *   *Salida (3.3V):* VCC (3.3V), GND y OUT1 conectado al pin digital **IO35** del puerto *Expand the input pin* del ESP32.
+*   **Almacenamiento Gráfico (MicroSD):** Es mandatorio el uso de la ranura MicroSD para almacenar las imágenes (fotos reales) de los productos. El ESP32 leerá estos archivos bajo demanda para renderizar la interfaz, manteniendo la memoria RAM libre para los procesos de FreeRTOS.
 
-## 3. Lógica de Pago (Monedero Joyzan)
-El monedero está configurado para emitir pulsos a 12V que son aislados a 3.3V mediante el módulo optoacoplador HiLetgo (PC817). 
-La conversión de denominación a pulsos es la siguiente:
-* **Moneda RD$ 5:** 1 pulso.
-* **Moneda RD$ 10:** 3 pulsos.
-* **Moneda RD$ 25:** 5 pulsos.
-* *Nota de software:* Se utiliza una interrupción de hardware y la función `millis()` (con una ventana de tiempo) para agrupar los pulsos de una misma ráfaga antes de actualizar el saldo en la pantalla.
+## 3. Lógica del Monedero Multimoneda
+El conteo se realiza decodificando ráfagas de pulsos enviadas al pin **IO35**, configurado con interrupciones de hardware:
+*   Moneda de **RD$ 5** = 1 pulso
+*   Moneda de **RD$ 10** = 3 pulsos
+*   Moneda de **RD$ 25** = 5 pulsos
+*   *Lógica de software:* Una tarea de FreeRTOS detecta el pulso inicial, acumula los consecutivos y, al detectar un tiempo de inactividad de la señal (ej. 300 ms), procesa el valor total y actualiza la variable de saldo global.
 
-## 4. Hardware de Actuación y Sensado
-* **Relés (12V DC):** 6 módulos de relé que gobiernan la potencia de los motores.
-* **Motores (JGY370):** Con micro-switch de final de carrera integrado. *Modificación:* Las pistas de cobre de la placa del motor se cortan para aislar el botón de los 12V del motor, obteniendo un contacto seco puro.
-* **Mapeo Lógico I2C:** Relación directa 1 a 1. 
-  * Expansor `0x20` (P0) -> Enciende Relé 1 -> Gira Producto 1.
-  * Expansor `0x21` (P0) -> Lee Micro-switch 1 -> Detiene Producto 1.
+## 4. Mapeo de Expansión I2C (Motores y Sensores)
+Se emplean dos módulos expansores de bus PCF8574 conectados en paralelo al puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND). Los actuadores son relés mecánicos de 12V DC.
 
-## 5. Mapa de Conexiones Principales (ESP32 4.0")
-* **Alimentación General:** Fuente conmutada de 12V alimenta motores y monedero. Un módulo Step-Down LM2596 reduce de 12V a 5V para energizar el ESP32 por el puerto USB-C.
-* **Bus I2C (Módulos NOYITO PCF8574):** Conectados al puerto dedicado `I2C Peripheral Interface` (3.3V, GND, SDA, SCL) en la esquina superior derecha de la placa.
-* **Interrupción del Monedero:** La salida `OUT1` del optoacoplador se conecta al pin `IO35` del conector `Expand the input pin`.
-* **Imágenes de Productos:** Se almacenan obligatoriamente en una memoria insertada en el `MicroSD Card Slot` para no saturar la memoria Flash del ESP32.
+| Producto | Relé de Activación (Módulo 0x20) | Sensor de Fin de Carrera (Módulo 0x21) |
+| :--- | :--- | :--- |
+| **Producto 1** | Pin P0 | Pin P0 |
+| **Producto 2** | Pin P1 | Pin P1 |
+| **Producto 3** | Pin P2 | Pin P2 |
+| **Producto 4** | Pin P3 | Pin P3 |
+| **Producto 5** | Pin P4 | Pin P4 |
+| **Producto 6** | Pin P5 | Pin P5 |
 
-## 6. Escalabilidad y Futuras Expansiones (V2.0)
-La placa actual posee puertos libres que permiten escalar comercialmente el proyecto:
-1. **Aplicación Móvil (Telemetría):** Uso del Wi-Fi nativo del ESP32 para visualizar estadísticas de ventas e inventario a distancia desde un smartphone.
-2. **Alertas Sonoras:** Uso del conector `Speaker Interface` para agregar una bocina que reproduzca sonidos al insertar monedas o despachar con éxito.
-3. **Pagos Institucionales:** Uso del conector `SPI Peripheral Interface` para integrar un lector de tarjetas RFID, permitiendo cobros mediante carnets universitarios o empresariales.
+*(Nota de Integración: Los micro-switches integrados en los motores JGY370 son modificados físicamente realizando cortes en las pistas de cobre de su placa base [LK20052], para aislarlos de los 12V de potencia. Proveen un cierre de contacto limpio a GND para el expansor 0x21).*
+
+## 5. Diseño de la Interfaz Gráfica (GUI)
+La pantalla de 4.0" opera en orientación vertical.
+*   **Grid de Productos:** Seis bloques de selección. Cada uno contiene:
+    *   Imagen del producto (JPG/BMP leída desde la MicroSD).
+    *   Selector de cantidades en la parte inferior: Botón `[-]`, Texto dinámico `Cantidad: 0`, Botón `[+]`.
+    *   Restricciones lógicas: Mínimo 0, Máximo 10 por producto.
+*   **Panel Inferior de Control:**
+    *   **Estado de Cuenta:** Refleja el saldo en tiempo real. Si es igual a 0, el texto muestra la instrucción *"Ingrese monedas"*.
+    *   **Acción:** Botón de *"Confirmar compra"*. Al ser accionado, invoca un cuadro de diálogo secundario (Modal) superpuesto solicitando validación: *"¿Confirmar selección? [Sí] [No]"*.
+
+## 6. Escalabilidad Futura
+El diseño mecatrónico permite la expansión modular sin alterar el núcleo:
+*   **Speaker Interface:** Puerto habilitado para un altavoz que provea retroalimentación auditiva (ej. ingreso de monedas o errores).
+*   **SPI Peripheral Interface:** Puerto de alta velocidad disponible para integrar sistemas de pago cerrado corporativo (lectores RFID/NFC).
+*   **IoT y Telemetría:** Uso del transceptor Wi-Fi nativo del ESP32 para desarrollar una aplicación móvil o *Dashboard* remoto, permitiendo monitorizar métricas de ventas y estado del inventario en la nube.
