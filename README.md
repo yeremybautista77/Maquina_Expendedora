@@ -6,13 +6,22 @@ Desarrollo de una **máquina expendedora de 6 canales (espirales) de nivel indus
 
 ---
 
+## 🛠️ Plataforma de Desarrollo y Firmware
+
+El desarrollo del firmware se ejecutará utilizando **ESP-IDF (Espressif IoT Development Framework)**, el estándar industrial para programación de microcontroladores ESP32 en **C nativo**.
+
+- **Sistema Operativo en Tiempo Real (FreeRTOS):** Se implementará FreeRTOS para gestionar el sistema mediante tareas concurrentes (Tasks). Esto permite aislar en diferentes hilos la lectura de interrupciones del monedero, el control I2C de los motores y el renderizado de la interfaz gráfica sin bloqueos.
+- **Control de Versiones:** El código fuente, la documentación y los esquemas se gestionarán a través de un repositorio en **Git/GitHub**.
+
+---
+
 ## 📋 Lista de Materiales (BOM)
 
 ### Control e Interfaz
-- **1x Pantalla Táctil Hosyond 3.5"**: Integra el ESP32-WROOM-32E, Wi-Fi/BT, y puertos de expansión JST. Activa como el cerebro y la interfaz gráfica (GUI) del sistema.
+- **1x Pantalla Táctil TFT (4.0 pulgadas):** Integra el ESP32-WROOM-32E, Wi-Fi/BT, y puertos de expansión JST. Activa como el cerebro y la interfaz gráfica (GUI) del sistema.
 
 ### Sistema de Pago y Aislamiento
-- **1x Monedero Multimoneda Joyzan (CH-926):** Configurado para leer monedas de RD$ 5 (1 pulso), RD$ 10 (2 pulsos) y RD$ 25 (5 pulsos). Opera a 12V.
+- **1x Monedero Multimoneda Joyzan (CH-926):** Configurado para leer monedas de RD$ 5 (1 pulso), RD$ 10 (3 pulsos) y RD$ 25 (5 pulsos). Opera a 12V.
 - **1x Módulo Optoacoplador HiLetgo (PC817 de 2 canales):** Aísla físicamente la señal de 12V del monedero, convirtiéndola en un pulso seguro de 3.3V para el ESP32.
 
 ### Actuadores y Expansión I/O
@@ -66,12 +75,39 @@ Por cada unidad solicitada, se ejecuta una secuencia estrictamente serial para e
 
 ---
 
-## 👥 Roles de Ejecución del Proyecto
+## 🖥️ Diseño de la Interfaz Gráfica (GUI)
 
-- **Gerente de Proyecto:** Gestión de presupuesto, compras (BOM) y documentación general (Plan de Negocios y ROI).
-- **Ingeniero de Firmware:** Programación C++ del ESP32 (GUI, interrupciones, bus I2C y máquina de estados).
-- **Ingeniero de Hardware:** Distribución de potencia, aislamiento óptico (PC817) y cableado estructurado.
-- **Ingeniero Mecánico:** Diseño del chasis, acople de motores JGY370 y calibración de las espirales.
+La pantalla de 4.0" opera en orientación vertical.
+
+- **Grid de Productos:** Seis bloques de selección. Cada uno contiene:
+  - Imagen del producto (JPG/BMP leída desde la MicroSD).
+  - Selector de cantidades en la parte inferior: Botón `[-]`, Texto dinámico `Cantidad: 0`, Botón `[+]`.
+  - Restricciones lógicas: Mínimo 0, Máximo 10 por producto.
+- **Panel Inferior de Control:**
+  - **Estado de Cuenta:** Refleja el saldo en tiempo real. Si es igual a 0, el texto muestra la instrucción *"Ingrese monedas"*.
+  - **Acción:** Botón de *"Confirmar compra"*. Al ser accionado, invoca un cuadro de diálogo secundario (Modal) superpuesto solicitando validación: *"¿Confirmar selección? [Sí] [No]"*.
+
+---
+
+## 🔮 Escalabilidad Futura
+
+El diseño mecatrónico permite la expansión modular sin alterar el núcleo:
+
+- **Speaker Interface:** Puerto habilitado para un altavoz que provea retroalimentación auditiva (ej. ingreso de monedas o errores).
+- **SPI Peripheral Interface:** Puerto de alta velocidad disponible para integrar sistemas de pago cerrado corporativo (lectores RFID/NFC).
+- **IoT y Telemetría:** Uso del transceptor Wi-Fi nativo del ESP32 para desarrollar una aplicación móvil o *Dashboard* remoto, permitiendo monitorizar métricas de ventas y estado del inventario en la nube.
+
+---
+
+## 👥 Desarrolladores del Proyecto
+
+Los estudiantes que elaboraron el proyecto son:
+
+- **Sebastian Josue Diaz Encarnación** (2025-0533)
+- **Lia Camille Figuereo Sanchez** (2025-0443)
+- **Wilmalis Perez Vargas** (2025-0461)
+- **Lia Marie Hernandez Corsino** (2025-0452)
+- **Yeremy Manuel Bautista Portes** (2025-0456)
 
 ---
 
