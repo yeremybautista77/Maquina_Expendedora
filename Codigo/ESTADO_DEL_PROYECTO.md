@@ -5,10 +5,49 @@
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
 > **Última actualización:** 2026-10-24
-> **Estado global:** fase **P0 (interfaz gráfica) implementada y compilando sin
-> errores ni warnings**. El grid 2×3, el táctil, el modal y el cobro diferido por
-> unidad están integrados. Queda verificar los pines reales de la TFT/táctil,
-> calibrar el táctil y cargar precios/stock reales.
+> **Estado global:** fase **P0 (interfaz gráfica) implementada, compilando sin
+> errores ni warnings y versionada en Git**. El grid 2×3, el táctil, el modal y
+> el cobro diferido por unidad están integrados. Queda la puesta en marcha en
+> hardware real (pines, calibración táctil), precios/stock reales y las tareas
+> P1 (homing, encolado atómico, NVS).
+
+### Resumen rápido: qué está hecho y qué falta
+
+**Hecho y verificado (compila):**
+
+- [x] Monedero por ISR en IO35 con ventana de ráfaga y antirrebote.
+- [x] Despacho I2C de 6 motores con Mutex (un motor a la vez) y sensores.
+- [x] Eventos de despacho (`UNIT_DONE` / `REQUEST_FAILED` / `IDLE`) y descarte
+      de la cola ante fallo.
+- [x] GUI real: ST7796 320×480 por `esp_lcd`, XPT2046, LVGL 8.4, grid 2×3 con
+      BMP de la MicroSD, panel de saldo y modal `[Sí] [No]`.
+- [x] Concurrencia: Mutex de estado y LVGL solo desde `task_gui`.
+- [x] Cobro diferido: confirmar solo encola; se cobra por unidad entregada.
+- [x] Build limpio (573 216 B, 45 % libre) y `Codigo/` commiteado.
+
+**Falta (en orden de prioridad):**
+
+1. Probar en la placa real y verificar pines de TFT/táctil (`TODO_VERIFICAR_PINES`).
+2. Calibrar el táctil (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`).
+3. Cargar precios y stock reales (hoy demo con `GUI_USE_DEMO_PRICES 1`).
+4. Rutina de *homing* al arrancar (P1).
+5. Encolado atómico de la compra (P1).
+6. Persistencia en NVS de stock/ventas (P1) y extras V2.0.
+
+### Últimos cambios de esta sesión
+
+1. **API táctil actualizada:** se sustituyó la API obsoleta
+   `esp_lcd_touch_get_coordinates()` por `esp_lcd_touch_get_data()`; la build
+   quedó sin warnings.
+2. **Ruta de imágenes LVGL corregida:** el driver `LV_FS_STDIO` concatena
+   `LV_FS_STDIO_PATH` sin separador, así que la ruta ahora es
+   `S:/productos/pN.bmp` (antes se generaba `/sdcardproductos/pN.bmp` y las
+   imágenes no habrían cargado).
+3. **Lifetime del puntero de imagen:** `lv_img_set_src()` no copia la cadena.
+   La ruta se guarda en `gui_cell_widgets_t.image_src[96]` (estático), no en la
+   pila de `create_cell()`.
+4. **Documentación y Git:** README y este documento actualizados; `Codigo/`
+   commiteado en 3 commits (`6d5ec5e`, `c118960`, `37b05c1`).
 
 ---
 
@@ -25,7 +64,7 @@
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí, pero **todo `Codigo/` está sin commitear** (`git status` lo muestra como *untracked*) |
+| Repositorio Git | Sí. `Codigo/` versionado en `main` (commits `6d5ec5e`, `c118960`, `37b05c1`); árbol de trabajo limpio |
 
 ### Restricciones que no se deben romper
 
@@ -412,11 +451,12 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 ### Calidad / tooling (transversal)
 
-- [ ] Primer commit de `Codigo/` (hoy todo untracked).
-- [ ] `.gitignore` ya existe y excluye `build/`, `sdkconfig`, etc.
+- [x] Primer commit de `Codigo/` (ya versionado en `main`).
+- [x] `.gitignore` excluye `build/`, `sdkconfig`, `managed_components/`, etc.
 - [ ] Añadir pruebas de la lógica pura (mapeo de pulsos, total, stock) con
       Unity o tests de host; hoy no hay ninguno.
-- [ ] Revisar `sdkconfig.defaults` (hoy mínimo: target, flash 4 MB, tick 1 ms).
+- [x] `sdkconfig.defaults` con LVGL, FS stdio, BMP, fuentes y XPT2046.
+- [ ] Añadir CI (build automatizado) si el proyecto se publica.
 
 ---
 
@@ -433,7 +473,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 | 7 | Pines I2C (21/22) sin verificar contra el esquemático | Puede no comunicarse | `board_config.h` |
 | 8 | Táctil sin calibrar (ejes/espejo) | Pulsaciones en zona equivocada | `BOARD_TOUCH_*` |
 | 9 | Sin pruebas automatizadas ni CI | Regresiones silenciosas | repo |
-| 10 | `Codigo/` sigue sin commitear | Riesgo de pérdida de trabajo | repo |
+| 10 | ~~`Codigo/` sin commitear~~ **Resuelto** | Ya versionado en `main` | repo |
 
 ### Notas de implementación delicadas
 
@@ -496,6 +536,27 @@ app_main: Arranque completado. Sistema en espera de monedas.
 
 Si la SD o la pantalla no están conectadas, se emite un warning y el sistema
 sigue arrancando (sin imágenes o sin interfaz, respectivamente).
+
+### Checklist de puesta en marcha en la placa real
+
+1. **Flashear** con `.\compilar.ps1 -Flash -Port COMx -Monitor`.
+2. **Confirmar el log:** debe aparecer `ST7796 listo`, `Tactil XPT2046 listo` y
+   `MicroSD montada`. Si falta alguno, revisar pines/alimentación.
+3. **Colores y orientación:** si los colores salen invertidos, cambiar
+   `BOARD_TFT_INVERT_COLOR`; si rojo/azul están cambiados, cambiar
+   `BOARD_TFT_USE_BGR_ORDER`; si la imagen está girada/espejada, ajustar
+   `BOARD_TFT_SWAP_XY/MIRROR_X/MIRROR_Y`.
+4. **Táctil:** pulsar cada esquina. Si el eje X/Y está intercambiado o invertido,
+   ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`. Repetir hasta que el botón
+   pulsado coincida con el dibujado.
+5. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
+   reiniciar. Sin archivos se muestra el placeholder `IMG`.
+6. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
+   con el valor correcto.
+7. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
+   saldo baja **solo cuando el motor termina la vuelta**.
+8. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
+   que el pedido se cancela sin cobrar las unidades no entregadas.
 
 ---
 
