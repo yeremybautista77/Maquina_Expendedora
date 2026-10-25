@@ -194,6 +194,13 @@ typedef struct {
     lv_obj_t *qty_label;
     lv_obj_t *minus_btn;
     lv_obj_t *plus_btn;
+    /**
+     * Ruta en formato LVGL ("S:/productos/pN.bmp").
+     *
+     * lv_img_set_src() NO copia la cadena: guarda el puntero. Por eso debe
+     * vivir tanto como la imagen, no en la pila de create_cell().
+     */
+    char image_src[96];
 } gui_cell_widgets_t;
 
 static lv_obj_t *s_grid = NULL;
@@ -302,8 +309,11 @@ static bool sd_file_exists(const char *path)
 }
 
 /**
- * Convierte "/sdcard/productos/p1.bmp" en "S:productos/p1.bmp" para LVGL.
- * El driver stdio de LVGL antepone CONFIG_LV_FS_STDIO_PATH ("/sdcard").
+ * Convierte "/sdcard/productos/p1.bmp" en "S:/productos/p1.bmp" para LVGL.
+ *
+ * El driver stdio de LVGL concatena CONFIG_LV_FS_STDIO_PATH ("/sdcard") con la
+ * ruta que recibe DESPUES de la letra de unidad, sin insertar separadores. Por
+ * eso la barra inicial es obligatoria: "/sdcard" + "/productos/p1.bmp".
  */
 static void to_lvgl_path(const char *sd_path, char *out, size_t out_len)
 {
@@ -320,7 +330,7 @@ static void to_lvgl_path(const char *sd_path, char *out, size_t out_len)
         relative++;
     }
 
-    snprintf(out, out_len, "%c:%s", (char)LV_FS_STDIO_LETTER, relative);
+    snprintf(out, out_len, "%c:/%s", (char)LV_FS_STDIO_LETTER, relative);
 }
 
 /* ==========================================================================
@@ -490,10 +500,11 @@ static void create_cell(uint8_t index)
     lv_obj_set_style_bg_opa(cell->img, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(cell->img, 4, 0);
 
-    char lvgl_path[96];
-    to_lvgl_path(s_products[index].image_path, lvgl_path, sizeof(lvgl_path));
+    to_lvgl_path(s_products[index].image_path, cell->image_src,
+                 sizeof(cell->image_src));
     if (sd_file_exists(s_products[index].image_path)) {
-        lv_img_set_src(cell->img, lvgl_path);
+        /* cell->image_src es estatico: LVGL conserva el puntero. */
+        lv_img_set_src(cell->img, cell->image_src);
         /* Se fija el tamano DESPUES del src para que el BMP no desborde. */
         lv_obj_set_size(cell->img, 64, 64);
     } else {
