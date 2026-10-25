@@ -131,8 +131,8 @@ Codigo/
 - **Cobro diferido (corrección del riesgo #3):** al confirmar, la GUI **solo
   encola** el pedido; no descuenta saldo ni stock. El descuento ocurre en
   `gui_display_on_unit_dispatched()`, únicamente cuando el motor confirma una
-  vuelta con el sensor en LOW. Si un motor falla por timeout, el pedido se
-  descarta, el saldo queda intacto y el stock no se reduce.
+  vuelta con el sensor en LOW. Si un motor falla por timeout, se descarta el
+  resto del pedido y **lo no entregado no se cobra ni reduce stock**.
 
 ## Pendiente (iterativo)
 
