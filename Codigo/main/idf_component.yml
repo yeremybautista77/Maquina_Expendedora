@@ -1,0 +1,16 @@
+## Dependencias gestionadas por el IDF Component Manager.
+##
+## - lvgl 8.4.0: API estable y Kconfig completo (se configura desde
+##   sdkconfig.defaults, sin lv_conf.h propio).
+## - esp_lcd_st7796: driver del panel ST7796 (no viene incluido en ESP-IDF).
+## - esp_lcd_touch + esp_lcd_touch_xpt2046: capa tactil y driver resistivo.
+##
+## El componente manager descarga todo en managed_components/ (ignorado por
+## git). No editar esos archivos a mano.
+
+dependencies:
+  idf: ">=5.2"
+  lvgl/lvgl: "8.4.0"
+  espressif/esp_lcd_st7796: "^1.5.0"
+  espressif/esp_lcd_touch: "^1.2.1"
+  atanisoft/esp_lcd_touch_xpt2046: "^1.0.6"

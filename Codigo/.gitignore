@@ -1,0 +1,12 @@
+# Artefactos generados por ESP-IDF
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.rename
+managed_components/
+dependencies.lock
+
+# Herramientas / editores
+.vscode/
+.cache/
+compile_commands.json

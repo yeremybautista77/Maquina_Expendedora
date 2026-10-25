@@ -1,0 +1,62 @@
+# =============================================================================
+#  sdkconfig.defaults - Configuracion base del proyecto maquina_expendedora
+#
+#  idf.py aplica estos valores cuando genera sdkconfig por primera vez.
+#  Despues se pueden cambiar con `idf.py menuconfig`.
+# =============================================================================
+
+# --- Plataforma --------------------------------------------------------------
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- FreeRTOS ----------------------------------------------------------------
+# Tick de 1 ms: la ventana de rafaga del monedero (300 ms) y los timeouts de
+# los motores necesitan resolucion de milisegundos.
+CONFIG_FREERTOS_HZ=1000
+
+# --- Memoria -----------------------------------------------------------------
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# --- Logs --------------------------------------------------------------------
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# =============================================================================
+#  LVGL 8.4 (configurado por Kconfig, sin lv_conf.h propio)
+# =============================================================================
+CONFIG_LV_CONF_SKIP=y
+
+# Color RGB565 y bytes intercambiados: el bus SPI del ST7796 recibe el byte
+# alto primero y esp_lcd (SPI) no expone swap_color_bytes.
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_16_SWAP=y
+
+# Heap interno de LVGL. Las imagenes BMP de 64x64 y los widgets del grid caben
+# holgadamente; se deja margen para el decodificador y el modal.
+CONFIG_LV_MEM_SIZE_KILOBYTES=64
+
+# Sistema de archivos sobre stdio: permite lv_img_set_src("S:/productos/p1.bmp")
+# y que LVGL lo resuelva como /sdcard/productos/p1.bmp.
+CONFIG_LV_USE_FS_STDIO=y
+CONFIG_LV_FS_STDIO_LETTER=83
+CONFIG_LV_FS_STDIO_PATH="/sdcard"
+CONFIG_LV_FS_STDIO_CACHE_SIZE=0
+
+# Decodificador de imagenes BMP (formato recomendado para la MicroSD).
+CONFIG_LV_USE_BMP=y
+
+# Fuentes usadas por la interfaz (nombre, precio, saldo y modal).
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+
+# =============================================================================
+#  Tactil XPT2046
+# =============================================================================
+# Un solo punto de contacto (pantalla resistiva).
+CONFIG_ESP_LCD_TOUCH_MAX_POINTS=1
+
+# Conversion lineal ADC (0..4096) -> coordenadas de pantalla. La calibracion
+# fina se hace con BOARD_TOUCH_SWAP_XY / MIRROR_X / MIRROR_Y en board_config.h.
+CONFIG_XPT2046_CONVERT_ADC_TO_COORDS=y
+CONFIG_XPT2046_Z_THRESHOLD=400
