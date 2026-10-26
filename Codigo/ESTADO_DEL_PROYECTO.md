@@ -9,8 +9,8 @@
 > confirmados, *homing*, NVS, rediseño de GUI y cobro diferido por unidad
 > implementados; compila sin errores ni warnings y está commiteado (`3fbefa7`).
 > Solo queda la **validación en la placa real** (táctil, colores, homing, NVS),
-> el encolado atómico y el modo administración. `main` está **5 commits por
-> delante de `origin/main`** (sin push).
+> el encolado atómico y el modo administración. `main` tiene **commits locales
+> pendientes de push** (incluido el de este documento).
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -39,7 +39,7 @@
 3. Modo administración para reponer stock y ajustar precios (P1).
 4. Pruebas automatizadas y CI (transversal).
 5. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
-6. **`git push`**: 5 commits locales sin subir a `origin/main`.
+6. **`git push`**: hay commits locales sin subir a `origin/main`.
 
 ---
 
@@ -50,8 +50,9 @@
 
 ### Pregunta 1 — ¿Subo los commits a GitHub?
 
-`main` tiene **5 commits locales sin subir** a `origin/main`
-(`1d8c3e5`, `37b05c1`, `c118960`, `6d5ec5e` y el nuevo `3fbefa7`).
+`main` tiene **commits locales sin subir** a `origin/main`
+(`6d5ec5e`, `c118960`, `37b05c1`, `1d8c3e5`, `3fbefa7` y los de documentación
+posteriores).
 
 - Opciones: **sí, haz push** / **no, déjalo local** / **espera**.
 - Si dices que sí, ejecuto `git push origin main` (no toco nada más).
@@ -113,7 +114,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Modo administración | ❌ Falta (P1) | Reponer stock / cambiar precios |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
-| Push a GitHub | ⏳ Pendiente | 5 commits locales (ver Pregunta 1) |
+| Push a GitHub | ⏳ Pendiente | Commits locales sin subir (ver Pregunta 1) |
 
 ---
 
@@ -130,7 +131,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí. `main` con 5 commits locales por delante de `origin/main`; último: `3fbefa7` (2026-10-25). Árbol de trabajo limpio |
+| Repositorio Git | Sí. `main` con commits locales pendientes de push; último: el de este documento (2026-10-25). Árbol de trabajo limpio |
 
 ### Restricciones que no se deben romper
 
@@ -553,7 +554,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 ### Calidad / tooling (transversal)
 
 - [x] Historial de commits del firmware en `main` (último: `3fbefa7`).
-- [ ] **`git push`** de los 5 commits locales a `origin/main` (ver §0).
+- [ ] **`git push`** de los commits locales a `origin/main` (ver §0).
 - [x] `.gitignore` excluye `build/`, `sdkconfig`, `managed_components/`, etc.
 - [ ] Añadir pruebas de la lógica pura (mapeo de pulsos, total, stock) con
       Unity o tests de host; hoy no hay ninguno.
