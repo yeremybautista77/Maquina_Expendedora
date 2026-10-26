@@ -1,8 +1,7 @@
-Carpeta para fotografías, diagramas y esquemáticos del documento ARQUITECTURA_HARDWARE.md.
+Carpeta para fotografías y diagramas del documento ARQUITECTURA_HARDWARE.md.
 
 Nombres esperados (ver índice de figuras, sección 5.1):
 
-- esquematico_general.pdf
 - placa_hosyond_esp32_32e.png
 - cableado_general.png
 - fuente_12v.png

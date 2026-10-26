@@ -1,36 +1,10 @@
 # Arquitectura de Hardware — Máquina Expendedora Automática de 6 Canales
 
-| Campo | Valor |
-| :--- | :--- |
-| **Proyecto** | Máquina Expendedora Automática de 6 Canales |
-| **Documento** | Arquitectura de Hardware |
-| **Versión** | 1.0 |
-| **Fecha** | 26 de octubre de 2026 |
-| **Placa base** | Hosyond 4.0" — ESP32-32E |
-| **Alcance** | Topología eléctrica, distribución de energía, acondicionamiento de señales y cableado físico |
-| **Fuera de alcance** | Software, lógica de aplicación, comunicaciones de red y diseño mecánico |
+**Versión 1.1 · 26 de octubre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
 
 > **Nota de alcance.** Este documento describe exclusivamente el dominio físico del sistema: voltajes, corrientes, estados lógicos, protecciones, conectores y topología de interconexión. El comportamiento del sistema y la lógica de control se documentan por separado.
 
-![Esquemático General](./img/esquematico_general.pdf)
-
-*Figura 1 — Esquemático eléctrico general del sistema. El archivo PDF debe contener el diagrama completo de interconexión, incluyendo rieles de alimentación, borneras, protecciones y numeración de conductores.*
-
----
-
 ## 1. Mapa Conceptual del Hardware (Diagrama de Bloques)
-
-El sistema se organiza en **cinco dominios funcionales** claramente separados:
-
-| Dominio | Tensión | Función |
-| :--- | :--- | :--- |
-| **Potencia** | 12 V DC | Alimentación de motores y monedero; conmutación de carga |
-| **Intermedio** | 5 V DC | Bobinas de relé y entrada de la placa base |
-| **Lógico** | 3.3 V DC | ESP32-32E, expansores I2C y lógica de pantalla/táctil/SD |
-| **Interfaz aislada** | 12 V → 3.3 V | Adaptación del pulso del monedero mediante optoacoplador |
-| **Periféricos SPI** | 3.3 V DC | Panel TFT, táctil resistivo y almacenamiento MicroSD |
-
-### 1.1 Diagrama de bloques
 
 ```mermaid
 graph TD
@@ -39,12 +13,12 @@ graph TD
     PSU["Fuente conmutada<br/>12 V DC · 10 A"]
     FUSE["Fusible principal<br/>10 A"]
     BUCK["Step-Down LM2596<br/>12 V → 5 V · 3 A"]
-    STAR(("GND común<br/>punto estrella"))
+    STAR(("GND común · V− / COM<br/>punto estrella"))
 
     subgraph POT["DOMINIO DE POTENCIA · 12 V"]
         R12["Riel 12 V"]
         COIN["Monedero CH-926<br/>12 V · salida open-collector"]
-        RELAYS["Banco de relés · 6 canales<br/>contactos COM / NO"]
+        RELAYS["Banco de relés · 6 canales<br/>bobinas 12 V · contactos COM / NO"]
         MOTORS["6 motores DC JGY370<br/>12 V · micro-switch trasero"]
     end
 
@@ -72,14 +46,14 @@ graph TD
     AC --> PSU
     PSU --> FUSE
     FUSE --> R12
-    FUSE --> BUCK
+    R12 --> BUCK
     BUCK --> R5
     R5 -->|"5 V"| ESP
     ESP -->|"3.3 V"| P33
 
-    R12 --> COIN
+    R12 -->|"12 V"| COIN
+    R12 -->|"bobinas 12 V"| RELAYS
     R12 -->|"contactos COM"| RELAYS
-    R5 -->|"bobinas"| RELAYS
     RELAYS -->|"12 V conmutado"| MOTORS
     MOTORS -->|"contacto seco"| M21
     M20 -->|"P0…P5 · activo LOW"| RELAYS
@@ -102,6 +76,7 @@ graph TD
     PSU --- STAR
     R5 --- STAR
     P33 --- STAR
+    RELAYS --- STAR
 
     classDef power fill:#fdecea,stroke:#c0392b,stroke-width:2px,color:#111
     classDef mid fill:#fff4e5,stroke:#e67e22,stroke-width:2px,color:#111
@@ -118,6 +93,16 @@ graph TD
     class STAR neutral
 ```
 
+### 1.1 Dominios funcionales
+
+| Dominio | Tensión | Función |
+| :--- | :--- | :--- |
+| **Potencia** | 12 V DC | Monedero, bobinas de relé, contactos de relé, motores y entrada del buck converter |
+| **Intermedio** | 5 V DC | Únicamente la entrada de 5 V de la placa base Hosyond |
+| **Lógico** | 3.3 V DC | ESP32-32E, expansores I2C y lógica de pantalla/táctil/SD |
+| **Interfaz aislada** | 12 V → 3.3 V | Adaptación del pulso del monedero mediante optoacoplador |
+| **Periféricos SPI** | 3.3 V DC | Panel TFT, táctil resistivo y almacenamiento MicroSD |
+
 ### 1.2 Lectura del diagrama
 
 1. **El cerebro del sistema** es la placa Hosyond 4.0" con módulo **ESP32-32E**. Integra el regulador que genera el riel lógico de 3.3 V, el conector de pantalla y los puertos de expansión JST.
@@ -125,10 +110,11 @@ graph TD
 3. **El monedero está eléctricamente separado** de la lógica mediante un optoacoplador PC817. El pulso de 12 V se convierte en una señal de 3.3 V compatible con el pin IO35.
 4. **Los dos expansores PCF8574 comparten un único bus I2C** y se diferencian por dirección: `0x20` para actuar sobre los relés, `0x21` para leer los fines de carrera.
 5. **Los periféricos SPI no comparten bus entre sí**: la pantalla y el táctil usan SPI2; la MicroSD usa SPI3.
+6. **El riel de 5 V es exclusivo de la placa base.** El LM2596 no alimenta relés ni motores; solo entrega los 5 V que la placa Hosyond convierte internamente a 3.3 V.
 
 ### 1.3 Identificación de la placa base
 
-**Figura 2 — Placa base Hosyond 4.0" (ESP32-32E)**
+**Figura 1 — Placa base Hosyond 4.0" (ESP32-32E)**
 
 ![Placa Hosyond ESP32-32E](./img/placa_hosyond_esp32_32e.png)
 
@@ -136,9 +122,7 @@ graph TD
 
 *Qué debe mostrar la fotografía:* vista frontal y posterior de la placa, identificación serigrafiada de los puertos **I2C Peripheral Interface** y **Expand the input pin**, ubicación del conector de alimentación y del regulador lineal.
 
-*Puntos a verificar:* que el puerto I2C entregue 3.3 V (no 5 V) en su pin de alimentación; que el pin IO35 esté accesible en el puerto de expansión; que el regulador tenga disipación térmica suficiente.
-
-**Figura 3 — Cableado general del conjunto**
+**Figura 2 — Cableado general del conjunto**
 
 ![Cableado general](./img/cableado_general.png)
 
@@ -157,15 +141,15 @@ graph LR
     AC["110 V AC<br/>60 Hz"] --> PSU["Fuente conmutada<br/>12 V · 10 A"]
     PSU --> FUSE["Fusible<br/>10 A"]
     FUSE --> R12["Riel 12 V"]
-    FUSE --> BUCK["LM2596<br/>12 V → 5 V"]
+    R12 --> COILS["Bobinas 12 V<br/>de los 6 relés"]
+    R12 --> COM["Contactos COM / NO<br/>de los 6 relés"]
+    COM --> MOT["6 motores<br/>DC 12 V"]
+    R12 --> COIN["Monedero<br/>CH-926"]
+    R12 --> BUCK["LM2596<br/>12 V → 5 V"]
     BUCK --> R5["Riel 5 V"]
-    R5 --> COILS["Bobinas de los<br/>6 relés"]
     R5 --> BOARD["Placa Hosyond<br/>entrada 5 V"]
     BOARD --> LDO["LDO 3.3 V<br/>integrado"]
     LDO --> R33["Riel 3.3 V"]
-    R12 --> COIN["Monedero<br/>CH-926"]
-    R12 --> COM["Contactos<br/>COM / NO"]
-    COM --> MOT["6 motores<br/>DC 12 V"]
     R33 --> LOADS["ESP32-32E · PCF8574<br/>TFT · táctil · MicroSD<br/>lado lógico del PC817"]
 ```
 
@@ -173,19 +157,30 @@ graph LR
 
 | Riel | Origen | Tolerancia | Consumidores | Corriente estimada | Observaciones |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **12 V** | Fuente conmutada 110 V AC → 12 V DC | ±5 % | Monedero CH-926; contactos COM/NO de los relés; entrada del LM2596 | 0.2 A en reposo; 0.3–1.0 A por motor; 2–3 A de arranque | Riel inductivo y ruidoso. Requiere desacoplo y protección contra picos. |
-| **5 V** | Step-Down LM2596 | ±3 % | Bobinas de los 6 relés; entrada de la placa Hosyond | 0.1–0.6 A | Solo una bobina energizada a la vez. |
+| **12 V** | Fuente conmutada 110 V AC → 12 V DC | ±5 % | Monedero CH-926; bobinas de los 6 relés; contactos COM/NO; entrada del LM2596 | 0.2 A en reposo; 0.3–1.0 A por motor; 2–3 A de arranque | Riel inductivo y ruidoso. Requiere desacoplo y protección contra picos. |
+| **5 V** | Step-Down LM2596 | ±3 % | Entrada de 5 V de la placa Hosyond | 0.35–0.55 A | Exclusivo de la placa base; no alimenta relés ni motores. |
 | **3.3 V** | Regulador lineal de la placa Hosyond | ±2 % | ESP32-32E; PCF8574; TFT; táctil; MicroSD; salida del PC817 | 0.3–0.6 A | **No** alimentar los PCF8574 a 5 V. |
 
-> **⚠️ Nota de diseño — El módulo de relés pertenece a dos dominios.** Las **bobinas** se alimentan a 5 V y las **entradas de control** son de nivel lógico; los **contactos** conmutan los 12 V de los motores. Confundir ambos dominios es la causa más común de daño en este tipo de montaje.
+> **⚠️ Nota de diseño — Tres niveles en el módulo de relés.** Las **bobinas** y los **contactos** operan a **12 V**; las **entradas de control IN1–IN6** son de nivel lógico y se conectan al PCF8574 a **3.3 V**. La bobina no se alimenta desde el riel de 5 V ni desde el ESP32.
 
 ### 2.3 Criterios de distribución
 
-- **Separación de dominios.** El riel de 12 V alimenta exclusivamente cargas inductivas y el monedero. Ningún componente lógico se alimenta directamente de 12 V.
-- **Conversión en cascada.** 12 V → 5 V (LM2596) → 3.3 V (LDO de la placa). Esta cascada mantiene la lógica aislada del ruido de conmutación de los motores.
-- **Un solo retorno de referencia.** Todas las tierras convergen en un **punto estrella** en el negativo de la fuente. El retorno de los motores y el retorno lógico se unen únicamente en ese punto, nunca a lo largo del mazo.
+- **Separación de dominios.** El riel de 12 V alimenta el monedero, las bobinas y contactos de los relés, los motores y la entrada del buck converter. Ningún componente lógico se alimenta directamente de 12 V.
+- **Conversión en cascada.** 12 V → 5 V (LM2596) → 3.3 V (LDO de la placa). El riel de 5 V se reserva exclusivamente para la entrada de la placa base.
+- **Unión de tierras en punto estrella.** "Unir las tierras" significa llevar al mismo punto físico el **GND lógico del ESP32**, el **GND de salida del buck converter** y el **GND del módulo de relés de 12 V**. Los tres conductores se empalman y se atornillan juntos al **terminal negativo (V− / COM) de la fuente principal de 12 V**. Así, todas las señales de control (I2C, pulso del monedero, entradas de relé y sensores) comparten exactamente la misma referencia de 0 V y no aparecen diferencias de potencial entre módulos.
+
+| Elemento | Conductor | Punto de unión |
+| :--- | :--- | :--- |
+| GND lógico del ESP32 / placa Hosyond | 22 AWG, negro | Borne V− / COM de la fuente |
+| GND de salida del LM2596 | 22 AWG, negro | Borne V− / COM de la fuente |
+| GND del módulo de relés (12 V) | 18–20 AWG, negro | Borne V− / COM de la fuente |
+| GND del monedero CH-926 | 20 AWG, negro | Borne V− / COM de la fuente |
+| Retorno de los motores | 18 AWG, negro | Borne V− / COM de la fuente |
+
+> **Cómo se arma físicamente.** Los conductores de retorno se pelan, se empalman en una bornera o terminal de ojo y se atornillan al borne **V− / COM** de la fuente. No se usa el chasis metálico como conductor de retorno ni se encadenan las tierras de módulo en módulo: todos los retornos convergen en el mismo tornillo.
+
 - **Desacoplo.** Se recomienda un capacitor de **1000 µF / 25 V** a la salida de la fuente, **470 µF / 25 V** junto al banco de relés y **100 nF** entre VCC y GND de cada PCF8574.
-- **Calibre de conductores.** 18 AWG para 12 V de motores; 20–22 AWG para 5 V y 3.3 V; 24 AWG para señales I2C, SPI y pulso de monedero.
+- **Calibre de conductores.** 18 AWG para 12 V de motores y bobinas; 20–22 AWG para 5 V y 3.3 V; 24 AWG para señales I2C, SPI y pulso de monedero.
 - **Protección.** Fusible de 10 A en la línea principal de 12 V. Se recomienda además protección contra inversión de polaridad en la entrada de la fuente.
 
 > **⚠️ Nota de diseño — Aislamiento funcional, no de seguridad.** El PC817 separa el pulso del monedero del pin del ESP32 y elimina ruido de modo común, pero ambos lados comparten el mismo negativo de la fuente de 12 V. Por tanto, **no constituye aislamiento galvánico de seguridad**; no debe usarse como barrera contra contacto eléctrico.
@@ -196,19 +191,19 @@ graph LR
 | :--- | :--- | ---: | ---: | :--- |
 | 12 V | Monedero CH-926 | 0.10 A | 0.20 A | Consumo en reposo y durante aceptación |
 | 12 V | Motor JGY370 (1 activo) | 0.40 A | 2.50 A | Corriente de arranque con carga mecánica |
+| 12 V | Bobina de relé 12 V (1 activa) | 0.04 A | 0.05 A | Relé tipo SRD-12VDC |
 | 12 V | Entrada del LM2596 | 0.45 A | 0.80 A | Equivalente de la carga de 5 V |
-| **12 V** | **Total del riel** | **≈ 1.0 A** | **≈ 3.5 A** | Fuente de 10 A: margen > 2.5× |
-| 5 V | Bobina de relé (1 activa) | 0.07 A | 0.09 A | Relé tipo SRD-05VDC |
+| **12 V** | **Total del riel** | **≈ 1.0 A** | **≈ 3.6 A** | Fuente de 10 A: margen > 2.7× |
 | 5 V | Placa Hosyond | 0.35 A | 0.55 A | Lógica + retroiluminación |
-| **5 V** | **Total del riel** | **≈ 0.45 A** | **≈ 0.65 A** | LM2596 de 3 A: margen amplio |
+| **5 V** | **Total del riel** | **≈ 0.35 A** | **≈ 0.55 A** | LM2596 de 3 A: margen > 5× |
 | 3.3 V | ESP32-32E | 0.12 A | 0.24 A | Pico de radio deshabilitado |
 | 3.3 V | PCF8574 ×2 | 0.002 A | 0.004 A | Consumo cuasiestático |
 | 3.3 V | TFT + táctil + MicroSD | 0.15 A | 0.25 A | Panel y retroiluminación |
-| **3.3 V** | **Total del riel** | **≈ 0.30 A** | **≈ 0.50 A** | LDO: verificar disipación |
+| **3.3 V** | **Total del riel** | **≈ 0.30 A** | **≈ 0.50 A** | LDO: margen térmico según encapsulado |
 
-*Los valores son estimaciones de diseño basadas en hojas de datos típicas. Deben confirmarse con medición directa durante la puesta en marcha.*
+*Los valores son estimaciones de diseño basadas en hojas de datos típicas de los componentes seleccionados.*
 
-**Figura 4 — Fuente de alimentación principal**
+**Figura 3 — Fuente de alimentación principal**
 
 ![Fuente conmutada 12 V](./img/fuente_12v.png)
 
@@ -216,15 +211,13 @@ graph LR
 
 *Qué debe mostrar la fotografía:* placa de características de la fuente, borneras de salida, fusible instalado y punto de unión del negativo con el resto del sistema.
 
-**Figura 5 — Conversión a 5 V**
+**Figura 4 — Conversión a 5 V**
 
 ![Step-Down LM2596](./img/stepdown_lm2596.png)
 
-*Descripción técnica:* módulo reductor 12 V → 5 V basado en LM2596, con potenciómetro de ajuste y disipador.
+*Descripción técnica:* módulo reductor 12 V → 5 V basado en LM2596, con potenciómetro de ajuste y disipador. Su salida alimenta únicamente la entrada de 5 V de la placa base.
 
-*Qué debe mostrar la fotografía:* ajuste verificado a 5.0 V con multímetro, disipador instalado y borneras de entrada/salida identificadas.
-
-*Puntos a verificar:* tensión de salida estable con carga; ausencia de calentamiento excesivo del inductor; continuidad del negativo común.
+*Qué debe mostrar la fotografía:* potenciómetro de ajuste, disipador instalado y borneras de entrada/salida identificadas.
 
 ---
 
@@ -265,7 +258,7 @@ Toda la máquina adopta la convención **activo en nivel BAJO**: el estado de re
 
 > **R = (12 V − 1.2 V − 0.2 V) / 8 mA ≈ 1.3 kΩ** → valor comercial: **1.2 kΩ**
 
-El módulo HiLetgo integra esta resistencia. Si se implementa de forma discreta, debe verificarse la corriente real antes de conectar el monedero.
+El módulo HiLetgo integra esta resistencia; el cálculo se incluye como referencia de diseño.
 
 **Pull-up de salida.** El pin **IO35 es de solo entrada y no dispone de pull-up interno**. La resistencia física de **10 kΩ a 3.3 V** es obligatoria para definir el nivel alto y evitar lecturas flotantes. Con 10 kΩ y la capacidad típica del cableado, el tiempo de subida es del orden de microsegundos, muy inferior a la duración de los pulsos del monedero (decenas de milisegundos).
 
@@ -278,7 +271,7 @@ El módulo HiLetgo integra esta resistencia. Si se implementa de forma discreta,
 | RD$ 10 | 5 | RD$ 10.00 |
 | RD$ 25 | 7 | RD$ 25.00 |
 
-**Figura 6 — Acondicionamiento del monedero**
+**Figura 5 — Acondicionamiento del monedero**
 
 ![Optoacoplador PC817](./img/optoacoplador_pc817.png)
 
@@ -286,9 +279,7 @@ El módulo HiLetgo integra esta resistencia. Si se implementa de forma discreta,
 
 *Qué debe mostrar la fotografía:* identificación de IN1/OUT1, resistencia limitadora de entrada, bornera de 3.3 V/GND del lado lógico y la resistencia de 10 kΩ conectada entre OUT1 y 3.3 V.
 
-*Puntos a verificar:* continuidad entre el cátodo del LED y la línea de pulso del monedero; ausencia de continuidad entre GND de 12 V y GND lógico; nivel alto de 3.3 V en reposo y nivel bajo estable durante el pulso.
-
-**Figura 7 — Monedero CH-926**
+**Figura 6 — Monedero CH-926**
 
 ![Monedero CH-926](./img/monedero_ch926.png)
 
@@ -316,7 +307,7 @@ Cada motor reductor incorpora un micro-switch que señala una vuelta completa. E
 
 **Tiempo máximo de energización por canal:** 10 s. Es un límite de protección térmica del motor y del cableado; si el sensor no confirma el reposo en ese plazo, la bobina del relé debe desenergizarse.
 
-**Figura 8 — Sensores de fin de carrera**
+**Figura 7 — Sensores de fin de carrera**
 
 ![Módulo de sensores 0x21](./img/modulo_sensores.png)
 
@@ -324,9 +315,7 @@ Cada motor reductor incorpora un micro-switch que señala una vuelta completa. E
 
 *Qué debe mostrar la fotografía:* configuración de los DIP switches de dirección, bornera de bus I2C (VCC/GND/SDA/SCL), conexión de los seis hilos de sensor y punto común de GND.
 
-*Puntos a verificar:* que la pista de la placa LK20052 esté efectivamente cortada; que ningún terminal del switch tenga continuidad con los 12 V del motor; que el estado en reposo sea LOW y al girar manualmente pase a HIGH.
-
-**Figura 9 — Motor reductor y micro-switch**
+**Figura 8 — Motor reductor y micro-switch**
 
 ![Motor reductor JGY370](./img/motor_jgy370.png)
 
@@ -336,9 +325,9 @@ Cada motor reductor incorpora un micro-switch que señala una vuelta completa. E
 
 ### 3.4 Banco de relés (módulo 0x20)
 
-El banco está formado por **6 canales de relé con bobina de 5 V**, entradas optoacopladas y **activación por nivel bajo**. La salida del PCF8574 no alimenta la bobina: solo hunde la corriente del LED del optoacoplador interno (≈ 2–4 mA). La conmutación de la bobina la realiza la electrónica propia del módulo.
+El banco está formado por **6 canales de relé con bobina de 12 V**, entradas optoacopladas y **activación por nivel bajo**. La bobina se alimenta desde el riel de 12 V a través del borne VCC del módulo. La salida del PCF8574 no alimenta la bobina: solo hunde la corriente del LED del optoacoplador interno (≈ 2–4 mA). La conmutación de la bobina la realiza la electrónica propia del módulo.
 
-| Puerto 0x20 | Entrada del relé | LED interno | Bobina | Contacto COM–NO | Motor |
+| Puerto 0x20 | Entrada del relé | LED interno | Bobina 12 V | Contacto COM–NO | Motor |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | HIGH ≈ 3.3 V | Sin corriente | Apagado | Desenergizada | Abierto | Detenido |
 | LOW ≈ 0 V | ≈ 2–4 mA | Encendido | Energizada | Cerrado | Alimentado a 12 V |
@@ -346,6 +335,8 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 **Ruta de potencia por canal:**
 
 > **Riel 12 V** → **Fusible** → **COM del relé** → **NO** → **Motor (+)** → **GND de potencia**
+>
+> **Riel 12 V** → **VCC del módulo** → **Bobina del relé** → **GND del módulo**
 
 **Protecciones recomendadas:**
 
@@ -353,19 +344,17 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 - **Red RC** de 100 Ω + 100 nF entre contactos COM y NO para amortiguar el arco eléctrico y prolongar la vida del relé.
 - **Fusible por canal** o protección térmica si el cableado de motor es de sección reducida.
 
-**Capacidad de contacto.** Verificar que la corriente de arranque del motor (≈ 2–3 A) quede por debajo de la corriente nominal del contacto del relé. Los módulos comerciales suelen declarar 10 A / 250 V AC, pero el margen real en DC inductivo es menor.
+**Capacidad de contacto.** La corriente de arranque del motor (≈ 2–3 A) debe quedar por debajo de la corriente nominal del contacto del relé. Los módulos comerciales suelen declarar 10 A / 250 V AC, pero el margen real en DC inductivo es menor.
 
-> **⚠️ Nota de diseño — Compatibilidad de nivel en la entrada del relé.** Algunos módulos de relé de 5 V referencian su entrada al propio riel de 5 V, de modo que el pin IN puede quedar por encima de 3.6 V cuando está inactivo. Ese valor excede el máximo absoluto del PCF8574 y del ESP32. Antes de conectar, medir la tensión en IN con el módulo alimentado y la entrada al aire. Si supera 3.3 V, usar un adaptador de nivel, un driver tipo ULN2803 o un módulo de relé compatible con lógica de 3.3 V.
+> **⚠️ Nota de diseño — Compatibilidad de la entrada de control.** Las bobinas y los contactos operan a 12 V, pero las entradas IN1–IN6 deben ser compatibles con 3.3 V. En módulos cuyo optoacoplador se referencia al propio riel de 12 V, el nivel alto de 3.3 V puede no garantizar el corte. Para ese caso se intercala un optoacoplador o un driver tipo ULN2803 entre el PCF8574 y el módulo; el expansor no se conecta directamente a una entrada referenciada a 12 V.
 
-**Figura 10 — Banco de relés**
+**Figura 9 — Banco de relés**
 
 ![Módulo de Relés 0x20](./img/modulo_reles.png)
 
-*Descripción técnica:* conjunto de 6 relés con bobina de 5 V, entradas optoacopladas activas en bajo y contactos que conmutan los 12 V de los motores.
+*Descripción técnica:* conjunto de 6 relés con bobina de 12 V, entradas optoacopladas activas en bajo y contactos que conmutan los 12 V de los motores.
 
-*Qué debe mostrar la fotografía:* bornera de entradas IN1–IN6, configuración de alimentación de bobinas, numeración de los contactos COM/NO y ruta de los conductores de 12 V.
-
-*Puntos a verificar:* que solo una bobina se energice a la vez; que la entrada inactiva no supere 3.3 V; que el contacto abierto no presente continuidad y el cerrado sí; que el diodo de rueda libre esté correctamente polarizado.
+*Qué debe mostrar la fotografía:* bornera de entradas IN1–IN6, alimentación de bobinas a 12 V, numeración de los contactos COM/NO y ruta de los conductores de 12 V.
 
 ### 3.5 Capa física del bus I2C
 
@@ -385,7 +374,7 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 | PCF8574 de actuadores | 0 | 0 | 0 | `0x20` | Escritura de relés |
 | PCF8574 de sensores | 0 | 0 | 1 | `0x21` | Lectura de fines de carrera |
 
-> **⚠️ Nota de diseño — Verificar la variante del circuito integrado.** El **PCF8574** tiene dirección base `0x20`; el **PCF8574A** tiene dirección base `0x38`. Si los módulos montan la variante "A", las direcciones serán `0x38` y `0x39`. Confirmar la serigrafía del integrado antes de configurar los DIP switches.
+> **⚠️ Nota de diseño — Variante del circuito integrado.** El **PCF8574** tiene dirección base `0x20`; el **PCF8574A** tiene dirección base `0x38`. Si los módulos montan la variante "A", las direcciones son `0x38` y `0x39`, y los DIP switches se ajustan en consecuencia.
 
 **Buenas prácticas de cableado:**
 
@@ -394,7 +383,7 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 - Un capacitor de 100 nF entre VCC y GND en cada módulo, lo más cerca posible del integrado.
 - No conectar ni desconectar módulos con el sistema energizado.
 
-**Figura 11 — Bus I2C y expansores**
+**Figura 10 — Bus I2C y expansores**
 
 ![Bus I2C](./img/bus_i2c.png)
 
@@ -504,9 +493,10 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 | I2C Peripheral Interface | JST 4 pines | 3.3 V / GND / SDA / SCL | Ambos PCF8574 |
 | Expand the input pin | JST | IO35 / 3.3 V / GND | Salida del PC817 |
 | Salida de relés | Bornera por canal | COM / NO | Motores |
+| Alimentación de bobinas | Bornera 2 pines | 12 V / GND | Módulo de relés |
 | Sensores | Bornera por canal | Pn / GND | Micro-switches |
 
-**Figura 12 — Panel TFT ST7796**
+**Figura 11 — Panel TFT ST7796**
 
 ![Pantalla ST7796](./img/pantalla_st7796.png)
 
@@ -514,7 +504,7 @@ El banco está formado por **6 canales de relé con bobina de 5 V**, entradas op
 
 *Qué debe mostrar la fotografía:* conector FPC, puerto de expansión de la placa, borneras de alimentación y etiquetado de los pines utilizados.
 
-**Figura 13 — Borneras de conexión**
+**Figura 12 — Borneras de conexión**
 
 ![Borneras de conexión](./img/borneras_conexion.png)
 
@@ -532,23 +522,22 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 
 | Figura | Archivo | Sección | Contenido esperado |
 | :---: | :--- | :--- | :--- |
-| 1 | `img/esquematico_general.pdf` | Portada | Esquemático eléctrico completo |
-| 2 | `img/placa_hosyond_esp32_32e.png` | 1.3 | Placa base y puertos |
-| 3 | `img/cableado_general.png` | 1.3 | Mazo de cables y tierras |
-| 4 | `img/fuente_12v.png` | 2.4 | Fuente conmutada |
-| 5 | `img/stepdown_lm2596.png` | 2.4 | Módulo reductor |
-| 6 | `img/optoacoplador_pc817.png` | 3.2 | Aislamiento del monedero |
-| 7 | `img/monedero_ch926.png` | 3.2 | Validador de monedas |
-| 8 | `img/modulo_sensores.png` | 3.3 | Expansor `0x21` |
-| 9 | `img/motor_jgy370.png` | 3.3 | Motor y micro-switch |
-| 10 | `img/modulo_reles.png` | 3.4 | Banco de relés `0x20` |
-| 11 | `img/bus_i2c.png` | 3.5 | Bus I2C y pull-ups |
-| 12 | `img/pantalla_st7796.png` | 4.7 | Panel TFT |
-| 13 | `img/borneras_conexion.png` | 4.7 | Borneras y etiquetado |
+| 1 | `img/placa_hosyond_esp32_32e.png` | 1.3 | Placa base y puertos |
+| 2 | `img/cableado_general.png` | 1.3 | Mazo de cables y tierras |
+| 3 | `img/fuente_12v.png` | 2.4 | Fuente conmutada |
+| 4 | `img/stepdown_lm2596.png` | 2.4 | Módulo reductor |
+| 5 | `img/optoacoplador_pc817.png` | 3.2 | Aislamiento del monedero |
+| 6 | `img/monedero_ch926.png` | 3.2 | Validador de monedas |
+| 7 | `img/modulo_sensores.png` | 3.3 | Expansor `0x21` |
+| 8 | `img/motor_jgy370.png` | 3.3 | Motor y micro-switch |
+| 9 | `img/modulo_reles.png` | 3.4 | Banco de relés `0x20` |
+| 10 | `img/bus_i2c.png` | 3.5 | Bus I2C y pull-ups |
+| 11 | `img/pantalla_st7796.png` | 4.7 | Panel TFT |
+| 12 | `img/borneras_conexion.png` | 4.7 | Borneras y etiquetado |
 
 ### 5.2 Convención para las fotografías
 
-- **Formato:** PNG para fotografías y diagramas de bloque; PDF vectorial para esquemáticos.
+- **Formato:** PNG para fotografías y diagramas de bloque.
 - **Resolución mínima:** 1920 × 1080 px, con iluminación uniforme y sin reflejos.
 - **Encuadre:** incluir una referencia de escala (regla o moneda) y etiquetar los conectores visibles.
 - **Nomenclatura:** minúsculas, sin acentos ni espacios; guion bajo como separador.
@@ -562,48 +551,31 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | :---: | :--- | :--- | :--- |
 | 1 | Placa Hosyond 4.0" | ESP32-32E, TFT ST7796 320 × 480, táctil XPT2046, MicroSD | Control e interfaz |
 | 1 | Fuente conmutada | 110 V AC → 12 V DC, ≥ 10 A | Alimentación principal |
-| 1 | Step-Down LM2596 | 12 V → 5 V, ≥ 3 A, con disipador | Riel intermedio |
+| 1 | Step-Down LM2596 | 12 V → 5 V, ≥ 3 A, con disipador | Alimentación de la placa base |
 | 1 | Monedero Joyzan CH-926 | 12 V, salida de pulsos open-collector | Aceptación de monedas |
 | 1 | Módulo optoacoplador HiLetgo | PC817, 2 canales | Aislamiento del pulso |
 | 1 | Resistencia | 10 kΩ, 1/4 W | Pull-up de IO35 |
 | 2 | Módulos PCF8574 | I2C, 3.3 V, dirección configurable | Expansión de E/S |
-| 6 | Módulos de relé | 1 canal, bobina 5 V, entrada activa en bajo | Conmutación de motores |
+| 6 | Módulos de relé | 1 canal, bobina 12 V, entrada activa en bajo | Conmutación de motores |
 | 6 | Motores JGY370 / JGA25-370 | 12 V DC con micro-switch trasero | Despacho de producto |
 | 6 | Diodos 1N5408 | 3 A / 1000 V | Rueda libre de motores |
 | 6 | Red RC | 100 Ω + 100 nF | Amortiguamiento de contactos |
 | 1 | Fusible | 10 A con portafusible | Protección principal |
 | — | Conductores | 18 AWG potencia, 24 AWG señal | Cableado |
 
-## Anexo B — Verificación eléctrica previa a la energización
-
-| # | Verificación | Criterio de aceptación |
-| :---: | :--- | :--- |
-| 1 | Continuidad de GND común | < 0.5 Ω entre todos los puntos de tierra |
-| 2 | Aislamiento del monedero | Sin continuidad entre GND de 12 V y GND lógico |
-| 3 | Pull-up de IO35 | 10 kΩ ± 5 % entre IO35 y 3V3 |
-| 4 | Cortes de pista LK20052 | Sin continuidad entre switch y 12 V del motor |
-| 5 | Direcciones I2C | `0x20` y `0x21` presentes en el bus |
-| 6 | Riel de 12 V | 12.0 V ± 5 % con carga nominal |
-| 7 | Riel de 5 V | 5.0 V ± 3 % con carga nominal |
-| 8 | Riel de 3.3 V | 3.3 V ± 2 % con pantalla encendida |
-| 9 | Entrada de relé inactiva | ≤ 3.3 V en IN con bobina alimentada |
-| 10 | Estados de sensor | LOW en reposo, HIGH al girar el motor |
-| 11 | Sentido de giro | Una vuelta completa por activación |
-| 12 | Corriente de arranque | ≤ 3 A por motor, medida con pinza |
-
-## Anexo C — Riesgos y decisiones de diseño
+## Anexo B — Riesgos y decisiones de diseño
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| Entrada de relé referenciada a 5 V | Sobretensión en PCF8574 y ESP32 | Medir IN inactivo; usar adaptador de nivel o módulo de 3.3 V |
+| Entrada de relé referenciada a 12 V | Sobretensión en PCF8574 y ESP32 | Intercalar optoacoplador o driver ULN2803; usar módulo con entrada compatible con 3.3 V |
 | Pico inductivo del motor | Arco en contactos, reinicio del sistema | Diodo de rueda libre + red RC + desacoplo |
-| Corte de pista incompleto | 12 V sobre el expansor de sensores | Verificar continuidad antes de energizar |
+| Corte de pista incompleto | 12 V sobre el expansor de sensores | Aislamiento físico del switch respecto al riel de 12 V mediante corte de pista |
 | Ruido en cables de sensor | Lecturas falsas de fin de carrera | Par trenzado con GND, pull-up externo, 100 nF |
 | Caída de tensión en el mazo de 12 V | Arranque débil del motor | 18 AWG y conexiones atornilladas |
 | Ausencia de paro de emergencia | Riesgo mecánico durante mantenimiento | Añadir interruptor general accesible |
-| Alimentación simultánea por USB y 5 V | Corriente inversa hacia el puerto USB | Verificar diodo de OR en la placa o usar una sola fuente |
+| Alimentación simultánea por USB y 5 V | Corriente inversa hacia el puerto USB | Diodo de OR en la placa o uso de una sola fuente |
 
-## Anexo D — Glosario
+## Anexo C — Glosario
 
 | Término | Definición |
 | :--- | :--- |
@@ -613,8 +585,9 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | **Pull-up** | Resistencia que fija el nivel alto de una línea cuando nada la fuerza a bajo |
 | **PCF8574** | Expansor de 8 bits por I2C con puertos cuasi-bidireccionales |
 | **Rueda libre** | Diodo que recircula la corriente inductiva al desenergizar una carga |
-| **Punto estrella** | Único punto de unión de todos los retornos para evitar lazos de tierra |
+| **Punto estrella** | Único punto de unión de todos los retornos, atornillado al borne V− / COM de la fuente |
+| **V− / COM** | Terminal negativo de referencia de la fuente de 12 V |
 
 ---
 
-*Documento de hardware — versión 1.0. Las figuras 1 a 13 son marcadores pendientes de sustitución por material fotográfico y esquemático definitivo.*
+*Documento de hardware — versión 1.1. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*
