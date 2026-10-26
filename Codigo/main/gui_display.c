@@ -2006,8 +2006,9 @@ esp_err_t gui_display_init(void)
     s_modal_balance_cents = 0;
 
     /*
-     * Precios de la tabla compilada + saldo y stock persistidos en NVS.
-     * Si la NVS esta vacia se arranca con saldo 0 y GUI_DEFAULT_STOCK.
+     * Precios, saldo y stock persistidos en NVS.
+     * Si la NVS esta vacia se arranca con saldo 0, stock GUI_DEFAULT_STOCK y
+     * precios de fabrica (RD$ 40..90).
      */
     storage_load_locked();
 
