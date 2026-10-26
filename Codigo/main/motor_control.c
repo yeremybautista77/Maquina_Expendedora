@@ -156,6 +156,109 @@ static esp_err_t wait_sensor(uint8_t channel, bool expected_logic, uint32_t time
 
 /* --- API publica ---------------------------------------------------------- */
 
+esp_err_t motor_control_home_all(void)
+{
+    if (s_relay_dev == NULL || s_sensor_dev == NULL || s_i2c_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (g_dispatch_mutex == NULL) {
+        ESP_LOGE(TAG, "g_dispatch_mutex no fue creado; homing omitido");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t result = ESP_OK;
+
+    ESP_LOGI(TAG, "Homing inicial de %u canales (timeout %d ms por canal)",
+             (unsigned)MOTOR_CHANNEL_COUNT, MOTOR_HOMING_TIMEOUT_MS);
+
+    /*
+     * Secuencial y canal por canal: se toma g_dispatch_mutex antes de energizar
+     * cada rele, de modo que nunca hay dos motores alimentados a la vez.
+     */
+    for (uint8_t channel = 0; channel < MOTOR_CHANNEL_COUNT; channel++) {
+        bool at_home = false;
+        esp_err_t err = motor_control_read_sensor(channel, &at_home);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Homing canal %u: fallo leyendo el sensor: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(err));
+            if (result == ESP_OK) {
+                result = err;
+            }
+            continue;
+        }
+        if (at_home) {
+            ESP_LOGI(TAG, "Homing canal %u: ya esta en reposo",
+                     (unsigned)(channel + 1));
+            continue;
+        }
+
+        if (xSemaphoreTake(g_dispatch_mutex,
+                           pdMS_TO_TICKS(MOTOR_HOMING_TIMEOUT_MS + 2000)) != pdTRUE) {
+            ESP_LOGE(TAG, "Homing canal %u: Mutex de despacho ocupado",
+                     (unsigned)(channel + 1));
+            if (result == ESP_OK) {
+                result = ESP_ERR_TIMEOUT;
+            }
+            continue;
+        }
+
+        /* Se relee bajo el Mutex: el canal pudo moverse mientras se esperaba. */
+        err = motor_control_read_sensor(channel, &at_home);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Homing canal %u: fallo releyendo el sensor: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(err));
+        } else if (!at_home) {
+            ESP_LOGW(TAG, "Homing canal %u: fuera de reposo, energizando rele",
+                     (unsigned)(channel + 1));
+
+            err = motor_control_set_relay(channel, true);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Homing canal %u: no se pudo activar el rele: %s",
+                         (unsigned)(channel + 1), esp_err_to_name(err));
+            } else {
+                err = wait_sensor(channel, true, MOTOR_HOMING_TIMEOUT_MS);
+
+                /*
+                 * El rele se apaga SIEMPRE, tambien si vencio el timeout, para
+                 * que el motor no quede girando indefinidamente.
+                 */
+                const esp_err_t off_err = motor_control_set_relay(channel, false);
+                if (off_err != ESP_OK) {
+                    ESP_LOGE(TAG, "Homing canal %u: FALLO APAGANDO EL RELE: %s",
+                             (unsigned)(channel + 1), esp_err_to_name(off_err));
+                    if (err == ESP_OK) {
+                        err = off_err;
+                    }
+                }
+
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "Homing canal %u: reposo alcanzado",
+                             (unsigned)(channel + 1));
+                } else {
+                    ESP_LOGE(TAG, "Homing canal %u: no se alcanzo el reposo: %s",
+                             (unsigned)(channel + 1), esp_err_to_name(err));
+                }
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_SETTLE_MS));
+        }
+
+        xSemaphoreGive(g_dispatch_mutex);
+
+        if (err != ESP_OK && result == ESP_OK) {
+            result = err;
+        }
+    }
+
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "Homing completado: los 6 canales estan en reposo");
+    } else {
+        ESP_LOGW(TAG, "Homing incompleto (%s); se continua el arranque",
+                 esp_err_to_name(result));
+    }
+    return result;
+}
+
 esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
 {
     if (i2c_bus == NULL) {
@@ -216,6 +319,15 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
 
     ESP_LOGI(TAG, "Control de motores listo (relees 0x%02X, sensores 0x%02X, %u canales)",
              BOARD_I2C_ADDR_RELAY, BOARD_I2C_ADDR_SENSOR, (unsigned)MOTOR_CHANNEL_COUNT);
+
+    /*
+     * Homing de arranque: recupera los canales que quedaron a mitad de vuelta
+     * tras un corte de energia. Se ejecuta antes de crear motor_task, por lo
+     * que no compite con ningun despacho. Un fallo de homing no impide que la
+     * maquina arranque: el canal afectado rechazara el despacho de forma segura.
+     */
+    (void)motor_control_home_all();
+
     return ESP_OK;
 
 fail:

@@ -56,6 +56,13 @@ extern "C" {
 /** Pausa entre unidades consecutivas del mismo canal. */
 #define MOTOR_REPEAT_DELAY_MS           400
 
+/**
+ * Tiempo maximo que un canal puede estar energizado durante el homing.
+ * Si el fin de carrera no se alcanza en este plazo, el rele se apaga y se
+ * continua con el canal siguiente (la maquina no queda bloqueada).
+ */
+#define MOTOR_HOMING_TIMEOUT_MS         10000
+
 /** Profundidad de la cola de despacho (una solicitud por producto). */
 #define MOTOR_QUEUE_LENGTH              8
 
@@ -126,6 +133,28 @@ extern SemaphoreHandle_t g_dispatch_mutex;
  *         no se puede configurar algun expansor.
  */
 esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus);
+
+/**
+ * @brief Lleva los 6 canales a su posicion de reposo (homing de arranque).
+ *
+ * Para cada canal, lee el sensor de fin de carrera (PCF8574 0x21):
+ *   - Si ya esta en LOW (reposo), no hace nada.
+ *   - Si esta en HIGH (mecanismo fuera de posicion), energiza su rele
+ *     (PCF8574 0x20) hasta que el sensor marque LOW.
+ *
+ * La rutina es SECUENCIAL: toma g_dispatch_mutex antes de energizar cada canal
+ * y lo libera al terminar, de modo que nunca hay dos motores alimentados a la
+ * vez (protege la fuente de 12 V). Cada canal tiene un timeout de seguridad de
+ * MOTOR_HOMING_TIMEOUT_MS; si vence, el rele se apaga y se continua con el
+ * siguiente canal.
+ *
+ * Debe llamarse despues de motor_control_init() y con g_dispatch_mutex creado.
+ * Se invoca automaticamente al final de motor_control_init().
+ *
+ * @return ESP_OK si todos los canales quedaron en reposo; ESP_ERR_TIMEOUT si
+ *         alguno no lo logro; error de I2C si fallo la lectura/escritura.
+ */
+esp_err_t motor_control_home_all(void);
 
 /**
  * @brief Activa o desactiva el rele de un canal.

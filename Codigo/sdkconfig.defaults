@@ -44,7 +44,8 @@ CONFIG_LV_FS_STDIO_CACHE_SIZE=0
 # Decodificador de imagenes BMP (formato recomendado para la MicroSD).
 CONFIG_LV_USE_BMP=y
 
-# Fuentes usadas por la interfaz (nombre, precio, saldo y modal).
+# Fuentes usadas por la interfaz (placeholder, nombre, precio, saldo y modal).
+CONFIG_LV_FONT_MONTSERRAT_10=y
 CONFIG_LV_FONT_MONTSERRAT_12=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_16=y

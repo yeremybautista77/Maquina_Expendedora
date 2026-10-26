@@ -53,6 +53,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "motor_control.h"
+#include "nvs.h"
 #include "sdmmc_cmd.h"
 
 static const char *TAG = "gui_display";
@@ -65,8 +66,20 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Lineas del buffer de dibujo de LVGL (320 x 40 x 2 B = 25.6 KB por buffer). */
 #define GUI_DRAW_BUF_LINES          40
 
-/** Altura del panel inferior (saldo + confirmar). */
-#define GUI_BOTTOM_PANEL_HEIGHT     100
+/** Altura del panel inferior (saldo + total + confirmar). 80 px = 16.7 %. */
+#define GUI_BOTTOM_PANEL_HEIGHT     80
+
+/** Tamano del recuadro de imagen de cada celda. */
+#define GUI_CELL_IMAGE_SIZE         52
+
+/** Tamano de los botones tactiles [-] y [+]. */
+#define GUI_CELL_BUTTON_SIZE        34
+
+/** Altura de la fila de controles de cantidad. */
+#define GUI_CELL_CONTROLS_HEIGHT    34
+
+/** Stock inicial de un producto cuando la NVS esta vacia. */
+#define GUI_DEFAULT_STOCK           10
 
 /** Duracion del toast en milisegundos. */
 #define GUI_TOAST_DURATION_MS       2500
@@ -77,40 +90,53 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Timeout para tomar el Mutex de estado (no debe bloquear a motor_task). */
 #define GUI_STATE_LOCK_TIMEOUT_MS   100
 
-/**
- * Precios de demostracion para poder probar el flujo P0 sin cargar una tabla
- * de precios desde la SD. Poner a 0 para dejar los precios sin configurar.
- * TODO_CONFIGURAR: reemplazar por la carga real de precios.
- */
-#define GUI_USE_DEMO_PRICES         1
+/* --- Persistencia (NVS) --------------------------------------------------- */
+
+/** Espacio de nombres NVS propio del inventario. */
+#define GUI_NVS_NAMESPACE           "vending"
+
+/** Clave del saldo (int64 en centavos). */
+#define GUI_NVS_KEY_BALANCE         "balance"
+
+/** Clave del stock (blob de GUI_PRODUCT_COUNT bytes). */
+#define GUI_NVS_KEY_STOCK           "stock"
 
 /* --- Modelo de productos -------------------------------------------------- */
 
-static gui_product_t s_products[GUI_PRODUCT_COUNT] = {
-    { .name = "Producto 1", .image_path = "/sdcard/productos/p1.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
-    { .name = "Producto 2", .image_path = "/sdcard/productos/p2.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
-    { .name = "Producto 3", .image_path = "/sdcard/productos/p3.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
-    { .name = "Producto 4", .image_path = "/sdcard/productos/p4.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
-    { .name = "Producto 5", .image_path = "/sdcard/productos/p5.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
-    { .name = "Producto 6", .image_path = "/sdcard/productos/p6.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = 10, .quantity = 0 },
+/**
+ * Precios base en centavos (RD$ 40, 50, 60, 70, 80 y 90).
+ * Es la unica fuente de verdad del precio: no se persiste en NVS para que un
+ * cambio de firmware actualice la tabla sin arrastrar valores viejos.
+ */
+static const uint32_t k_product_prices[GUI_PRODUCT_COUNT] = {
+    4000,   /* Producto 1: RD$ 40.00 */
+    5000,   /* Producto 2: RD$ 50.00 */
+    6000,   /* Producto 3: RD$ 60.00 */
+    7000,   /* Producto 4: RD$ 70.00 */
+    8000,   /* Producto 5: RD$ 80.00 */
+    9000,   /* Producto 6: RD$ 90.00 */
 };
 
-#if GUI_USE_DEMO_PRICES
-static const uint32_t k_demo_prices[GUI_PRODUCT_COUNT] = {
-    2500,   /* RD$ 25.00 */
-    1500,   /* RD$ 15.00 */
-    1000,   /* RD$ 10.00 */
-    2000,   /* RD$ 20.00 */
-    3500,   /* RD$ 35.00 */
-    5000,   /* RD$ 50.00 */
+static gui_product_t s_products[GUI_PRODUCT_COUNT] = {
+    { .name = "Producto 1", .image_path = "/sdcard/productos/p1.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
+    { .name = "Producto 2", .image_path = "/sdcard/productos/p2.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
+    { .name = "Producto 3", .image_path = "/sdcard/productos/p3.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
+    { .name = "Producto 4", .image_path = "/sdcard/productos/p4.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
+    { .name = "Producto 5", .image_path = "/sdcard/productos/p5.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
+    { .name = "Producto 6", .image_path = "/sdcard/productos/p6.bmp",
+      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
+      .quantity = 0 },
 };
-#endif
 
 /* --- Estado compartido (protegido por s_state_mutex) ---------------------- */
 
@@ -188,10 +214,10 @@ static void *s_draw_buf2 = NULL;
 typedef struct {
     lv_obj_t *cell;
     lv_obj_t *img;
+    lv_obj_t *img_box;
     lv_obj_t *img_placeholder;
-    lv_obj_t *name_label;
-    lv_obj_t *price_label;
-    lv_obj_t *qty_label;
+    lv_obj_t *header_label;     /**< Nombre + precio ("Producto 1\nRD$ 40.00"). */
+    lv_obj_t *qty_label;        /**< Texto "Cant: N". */
     lv_obj_t *minus_btn;
     lv_obj_t *plus_btn;
     /**
@@ -208,6 +234,7 @@ static gui_cell_widgets_t s_cells[GUI_PRODUCT_COUNT];
 
 static lv_obj_t *s_bottom_panel = NULL;
 static lv_obj_t *s_balance_label = NULL;
+static lv_obj_t *s_total_label = NULL;
 static lv_obj_t *s_status_label = NULL;
 static lv_obj_t *s_confirm_btn = NULL;
 
@@ -289,6 +316,107 @@ static void order_finalize_locked(void)
     }
 
     s_ui_dirty = true;
+}
+
+/* ==========================================================================
+ *  Persistencia en NVS (saldo + stock de los 6 productos)
+ * ========================================================================== */
+
+/**
+ * @brief Carga saldo y stock desde NVS.
+ *
+ * Debe llamarse con el Mutex de estado tomado (o antes de crear task_gui).
+ * Los precios SIEMPRE se toman de k_product_prices (tabla compilada); la NVS
+ * solo conserva lo que cambia en operacion: saldo y existencias.
+ *
+ * Si la NVS esta vacia, no esta inicializada o el blob es invalido, se aplican
+ * los valores por defecto (saldo 0 y GUI_DEFAULT_STOCK por producto).
+ */
+static void storage_load_locked(void)
+{
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        s_products[i].price_cents = k_product_prices[i];
+        s_products[i].stock = GUI_DEFAULT_STOCK;
+        s_products[i].quantity = 0;
+    }
+    s_balance_cents = 0;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(GUI_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "NVS vacia: saldo RD$ 0.00 y stock inicial %u por producto",
+                 (unsigned)GUI_DEFAULT_STOCK);
+        return;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "NVS no disponible al cargar (%s); valores por defecto",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    int64_t balance = 0;
+    if (nvs_get_i64(handle, GUI_NVS_KEY_BALANCE, &balance) == ESP_OK &&
+        balance >= 0) {
+        s_balance_cents = balance;
+    }
+
+    uint8_t stock[GUI_PRODUCT_COUNT];
+    size_t length = sizeof(stock);
+    if (nvs_get_blob(handle, GUI_NVS_KEY_STOCK, stock, &length) == ESP_OK &&
+        length == sizeof(stock)) {
+        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+            s_products[i].stock = stock[i];
+        }
+    }
+
+    nvs_close(handle);
+
+    ESP_LOGI(TAG,
+             "NVS cargada: saldo RD$ %lld.%02lld | stock %u/%u/%u/%u/%u/%u",
+             (long long)(s_balance_cents / 100),
+             (long long)(s_balance_cents % 100),
+             (unsigned)s_products[0].stock, (unsigned)s_products[1].stock,
+             (unsigned)s_products[2].stock, (unsigned)s_products[3].stock,
+             (unsigned)s_products[4].stock, (unsigned)s_products[5].stock);
+}
+
+/**
+ * @brief Guarda saldo y stock en NVS.
+ *
+ * Debe llamarse con el Mutex de estado tomado para obtener una instantanea
+ * coherente. La escritura real la hace la tarea que invoca (monedero o
+ * task_despacho), nunca una ISR.
+ */
+static esp_err_t storage_save_locked(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(GUI_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo abrir la NVS para guardar: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    uint8_t stock[GUI_PRODUCT_COUNT];
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        stock[i] = s_products[i].stock;
+    }
+
+    err = nvs_set_i64(handle, GUI_NVS_KEY_BALANCE, s_balance_cents);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, GUI_NVS_KEY_STOCK, stock, sizeof(stock));
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo guardar saldo/stock en NVS: %s",
+                 esp_err_to_name(err));
+    }
+    return err;
 }
 
 /* ==========================================================================
@@ -479,6 +607,7 @@ static void on_modal_no_clicked(lv_event_t *event)
 static void create_cell(uint8_t index)
 {
     gui_cell_widgets_t *cell = &s_cells[index];
+    const gui_product_t *product = &s_products[index];
 
     cell->cell = lv_obj_create(s_grid);
     lv_obj_set_grid_cell(cell->cell, LV_GRID_ALIGN_STRETCH, index % 2, 1,
@@ -487,83 +616,111 @@ static void create_cell(uint8_t index)
     lv_obj_set_style_bg_opa(cell->cell, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(cell->cell, lv_color_hex(0x3A5068), 0);
     lv_obj_set_style_border_width(cell->cell, 1, 0);
-    lv_obj_set_style_radius(cell->cell, 6, 0);
-    lv_obj_set_style_pad_all(cell->cell, 2, 0);
-    lv_obj_set_style_pad_row(cell->cell, 0, 0);
+    lv_obj_set_style_radius(cell->cell, 8, 0);
+    lv_obj_set_style_pad_all(cell->cell, 3, 0);
+    lv_obj_set_style_pad_row(cell->cell, 1, 0);
     lv_obj_clear_flag(cell->cell, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Imagen del producto (BMP 64x64 recomendado en /sdcard/productos). */
-    cell->img = lv_img_create(cell->cell);
-    lv_obj_set_size(cell->img, 64, 64);
-    lv_obj_align(cell->img, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(cell->img, lv_color_hex(0x0F1720), 0);
-    lv_obj_set_style_bg_opa(cell->img, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cell->img, 4, 0);
+    /* Columna centrada: cabecera, imagen y controles de cantidad. */
+    lv_obj_set_layout(cell->cell, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(cell->cell, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(cell->cell, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    to_lvgl_path(s_products[index].image_path, cell->image_src,
+    /* Cabecera: nombre + precio en un solo label de dos lineas. */
+    cell->header_label = lv_label_create(cell->cell);
+    lv_label_set_text_fmt(cell->header_label, "%s\nRD$ %u.%02u",
+                          product->name,
+                          (unsigned)(product->price_cents / 100),
+                          (unsigned)(product->price_cents % 100));
+    lv_label_set_long_mode(cell->header_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(cell->header_label, LV_PCT(100));
+    lv_obj_set_style_text_align(cell->header_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(cell->header_label, lv_color_hex(0xECF0F1), 0);
+    lv_obj_set_style_text_font(cell->header_label, &lv_font_montserrat_12, 0);
+
+    /*
+     * Recuadro gris claro para la imagen de la MicroSD. Si el BMP no existe se
+     * muestra "[Espacio Imagen]" centrado; si existe, se oculta el placeholder.
+     */
+    cell->img_box = lv_obj_create(cell->cell);
+    lv_obj_set_size(cell->img_box, GUI_CELL_IMAGE_SIZE, GUI_CELL_IMAGE_SIZE);
+    lv_obj_set_style_bg_color(cell->img_box, lv_color_hex(0xD5DBDB), 0);
+    lv_obj_set_style_bg_opa(cell->img_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(cell->img_box, 0, 0);
+    lv_obj_set_style_radius(cell->img_box, 4, 0);
+    lv_obj_set_style_pad_all(cell->img_box, 0, 0);
+    lv_obj_clear_flag(cell->img_box, LV_OBJ_FLAG_SCROLLABLE);
+
+    cell->img = lv_img_create(cell->img_box);
+    lv_obj_center(cell->img);
+
+    to_lvgl_path(product->image_path, cell->image_src,
                  sizeof(cell->image_src));
-    if (sd_file_exists(s_products[index].image_path)) {
+    const bool has_image = sd_file_exists(product->image_path);
+
+    cell->img_placeholder = lv_label_create(cell->img_box);
+    lv_label_set_text(cell->img_placeholder, "[Espacio Imagen]");
+    lv_label_set_long_mode(cell->img_placeholder, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(cell->img_placeholder, GUI_CELL_IMAGE_SIZE - 4);
+    lv_obj_set_style_text_align(cell->img_placeholder, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(cell->img_placeholder,
+                                lv_color_hex(0x5D6D7E), 0);
+    lv_obj_set_style_text_font(cell->img_placeholder,
+                               &lv_font_montserrat_10, 0);
+    lv_obj_center(cell->img_placeholder);
+
+    if (has_image) {
         /* cell->image_src es estatico: LVGL conserva el puntero. */
         lv_img_set_src(cell->img, cell->image_src);
-        /* Se fija el tamano DESPUES del src para que el BMP no desborde. */
-        lv_obj_set_size(cell->img, 64, 64);
+        lv_obj_add_flag(cell->img_placeholder, LV_OBJ_FLAG_HIDDEN);
     } else {
-        cell->img_placeholder = lv_label_create(cell->cell);
-        lv_label_set_text(cell->img_placeholder, "IMG");
-        lv_obj_set_style_text_color(cell->img_placeholder,
-                                    lv_color_hex(0x5D6D7E), 0);
-        lv_obj_set_style_text_font(cell->img_placeholder,
-                                   &lv_font_montserrat_12, 0);
-        lv_obj_align_to(cell->img_placeholder, cell->img, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_add_flag(cell->img, LV_OBJ_FLAG_HIDDEN);
     }
 
-    cell->name_label = lv_label_create(cell->cell);
-    lv_label_set_text(cell->name_label, s_products[index].name);
-    lv_label_set_long_mode(cell->name_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(cell->name_label, 150);
-    lv_obj_set_style_text_align(cell->name_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(cell->name_label, lv_color_hex(0xECF0F1), 0);
-    lv_obj_set_style_text_font(cell->name_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(cell->name_label, cell->img, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
+    /* Fila de controles: [-]  Cant: N  [+]. */
+    lv_obj_t *controls = lv_obj_create(cell->cell);
+    lv_obj_set_size(controls, LV_PCT(100), GUI_CELL_CONTROLS_HEIGHT);
+    lv_obj_set_style_bg_opa(controls, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(controls, 0, 0);
+    lv_obj_set_style_radius(controls, 0, 0);
+    lv_obj_set_style_pad_all(controls, 0, 0);
+    lv_obj_set_style_pad_column(controls, 2, 0);
+    lv_obj_clear_flag(controls, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(controls, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    cell->price_label = lv_label_create(cell->cell);
-    lv_label_set_text(cell->price_label, "RD$ --");
-    lv_obj_set_style_text_align(cell->price_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(cell->price_label, lv_color_hex(0xF1C40F), 0);
-    lv_obj_set_style_text_font(cell->price_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(cell->price_label, cell->name_label,
-                    LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
-
-    cell->minus_btn = lv_btn_create(cell->cell);
-    lv_obj_set_size(cell->minus_btn, 30, 24);
-    lv_obj_set_style_radius(cell->minus_btn, 4, 0);
+    cell->minus_btn = lv_btn_create(controls);
+    lv_obj_set_size(cell->minus_btn, GUI_CELL_BUTTON_SIZE,
+                    GUI_CELL_BUTTON_SIZE);
+    lv_obj_set_style_radius(cell->minus_btn, 6, 0);
     lv_obj_set_style_bg_color(cell->minus_btn, lv_color_hex(0x2C3E50), 0);
-    lv_obj_align(cell->minus_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     lv_obj_add_event_cb(cell->minus_btn, on_minus_clicked, LV_EVENT_CLICKED,
                         (void *)(uintptr_t)index);
     lv_obj_t *minus_label = lv_label_create(cell->minus_btn);
     lv_label_set_text(minus_label, "-");
-    lv_obj_set_style_text_font(minus_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(minus_label, &lv_font_montserrat_20, 0);
     lv_obj_center(minus_label);
 
-    cell->plus_btn = lv_btn_create(cell->cell);
-    lv_obj_set_size(cell->plus_btn, 30, 24);
-    lv_obj_set_style_radius(cell->plus_btn, 4, 0);
+    cell->qty_label = lv_label_create(controls);
+    lv_label_set_text(cell->qty_label, "Cant: 0");
+    lv_obj_set_style_text_align(cell->qty_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(cell->qty_label, lv_color_hex(0xECF0F1), 0);
+    lv_obj_set_style_text_font(cell->qty_label, &lv_font_montserrat_12, 0);
+
+    cell->plus_btn = lv_btn_create(controls);
+    lv_obj_set_size(cell->plus_btn, GUI_CELL_BUTTON_SIZE,
+                    GUI_CELL_BUTTON_SIZE);
+    lv_obj_set_style_radius(cell->plus_btn, 6, 0);
     lv_obj_set_style_bg_color(cell->plus_btn, lv_color_hex(0x2C3E50), 0);
-    lv_obj_align(cell->plus_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     lv_obj_add_event_cb(cell->plus_btn, on_plus_clicked, LV_EVENT_CLICKED,
                         (void *)(uintptr_t)index);
     lv_obj_t *plus_label = lv_label_create(cell->plus_btn);
     lv_label_set_text(plus_label, "+");
-    lv_obj_set_style_text_font(plus_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(plus_label, &lv_font_montserrat_20, 0);
     lv_obj_center(plus_label);
-
-    cell->qty_label = lv_label_create(cell->cell);
-    lv_label_set_text(cell->qty_label, "0/0");
-    lv_obj_set_style_text_align(cell->qty_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(cell->qty_label, lv_color_hex(0xECF0F1), 0);
-    lv_obj_set_style_text_font(cell->qty_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(cell->qty_label, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
 
 static void create_bottom_panel(void)
@@ -574,41 +731,65 @@ static void create_bottom_panel(void)
     lv_obj_set_style_bg_color(s_bottom_panel, lv_color_hex(0x16202C), 0);
     lv_obj_set_style_bg_opa(s_bottom_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_bottom_panel, lv_color_hex(0x3A5068), 0);
-    lv_obj_set_style_border_width(s_bottom_panel, 0, 0);
     lv_obj_set_style_border_side(s_bottom_panel, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_width(s_bottom_panel, 2, 0);
     lv_obj_set_style_radius(s_bottom_panel, 0, 0);
-    lv_obj_set_style_pad_all(s_bottom_panel, 8, 0);
+    lv_obj_set_style_pad_all(s_bottom_panel, 6, 0);
+    lv_obj_set_style_pad_column(s_bottom_panel, 6, 0);
     lv_obj_clear_flag(s_bottom_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_balance_label = lv_label_create(s_bottom_panel);
-    lv_label_set_text(s_balance_label, "Ingrese monedas");
-    lv_label_set_long_mode(s_balance_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_balance_label, 172);
-    lv_obj_set_style_text_color(s_balance_label, lv_color_hex(0x2ECC71), 0);
-    lv_obj_set_style_text_font(s_balance_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(s_balance_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    /* Fila: informacion a la izquierda y boton grande a la derecha. */
+    lv_obj_set_layout(s_bottom_panel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(s_bottom_panel, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_bottom_panel, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    s_status_label = lv_label_create(s_bottom_panel);
+    lv_obj_t *info = lv_obj_create(s_bottom_panel);
+    lv_obj_set_height(info, LV_PCT(100));
+    lv_obj_set_flex_grow(info, 1);
+    lv_obj_set_style_bg_opa(info, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(info, 0, 0);
+    lv_obj_set_style_radius(info, 0, 0);
+    lv_obj_set_style_pad_all(info, 0, 0);
+    lv_obj_set_style_pad_row(info, 2, 0);
+    lv_obj_clear_flag(info, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(info, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(info, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER);
+
+    s_balance_label = lv_label_create(info);
+    lv_label_set_text(s_balance_label, "Saldo: RD$ 0.00");
+    lv_label_set_long_mode(s_balance_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_balance_label, LV_PCT(100));
+    lv_obj_set_style_text_color(s_balance_label, lv_color_hex(0x2ECC71), 0);
+    lv_obj_set_style_text_font(s_balance_label, &lv_font_montserrat_14, 0);
+
+    s_total_label = lv_label_create(info);
+    lv_label_set_text(s_total_label, "Monto a Pagar: RD$ 0.00");
+    lv_label_set_long_mode(s_total_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_total_label, LV_PCT(100));
+    lv_obj_set_style_text_color(s_total_label, lv_color_hex(0xF1C40F), 0);
+    lv_obj_set_style_text_font(s_total_label, &lv_font_montserrat_14, 0);
+
+    s_status_label = lv_label_create(info);
     lv_label_set_text(s_status_label, "Seleccione productos");
     lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_status_label, 172);
+    lv_obj_set_width(s_status_label, LV_PCT(100));
     lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x95A5A6), 0);
-    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_12, 0);
-    lv_obj_align(s_status_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_10, 0);
 
     s_confirm_btn = lv_btn_create(s_bottom_panel);
-    lv_obj_set_size(s_confirm_btn, 124, 44);
-    lv_obj_set_style_radius(s_confirm_btn, 8, 0);
+    lv_obj_set_size(s_confirm_btn, 118, 64);
+    lv_obj_set_style_radius(s_confirm_btn, 10, 0);
     lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x2980B9), 0);
-    lv_obj_align(s_confirm_btn, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_add_event_cb(s_confirm_btn, on_confirm_clicked, LV_EVENT_CLICKED,
                         NULL);
     lv_obj_add_state(s_confirm_btn, LV_STATE_DISABLED);
 
     lv_obj_t *confirm_label = lv_label_create(s_confirm_btn);
-    lv_label_set_text(confirm_label, "Confirmar");
-    lv_obj_set_style_text_font(confirm_label, &lv_font_montserrat_16, 0);
+    lv_label_set_text(confirm_label, "[ Confirmar ]");
+    lv_obj_set_style_text_font(confirm_label, &lv_font_montserrat_14, 0);
     lv_obj_center(confirm_label);
 }
 
@@ -648,6 +829,10 @@ static void build_ui(void)
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
+    /*
+     * Area superior: grid ESTRICTO de 2 columnas x 3 filas que ocupa todo el
+     * espacio por encima del panel inferior (400 px = 83.3 % de la pantalla).
+     */
     s_grid = lv_obj_create(screen);
     lv_obj_set_size(s_grid, BOARD_TFT_H_RES,
                     BOARD_TFT_V_RES - GUI_BOTTOM_PANEL_HEIGHT);
@@ -655,15 +840,19 @@ static void build_ui(void)
     lv_obj_set_style_bg_opa(s_grid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_grid, 0, 0);
     lv_obj_set_style_radius(s_grid, 0, 0);
-    lv_obj_set_style_pad_all(s_grid, 2, 0);
-    lv_obj_set_style_pad_row(s_grid, 2, 0);
-    lv_obj_set_style_pad_column(s_grid, 2, 0);
+    lv_obj_set_style_pad_all(s_grid, 4, 0);
+    lv_obj_set_style_pad_row(s_grid, 4, 0);
+    lv_obj_set_style_pad_column(s_grid, 4, 0);
     lv_obj_clear_flag(s_grid, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(s_grid, LV_LAYOUT_GRID);
 
-    /* 2 columnas x 3 filas exactas para 320x380 con padding de 2 px. */
-    static lv_coord_t column_dsc[] = {156, 156, LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {124, 124, 124, LV_GRID_TEMPLATE_LAST};
+    /* Columnas y filas de igual tamano: celdas 154 x 128 px. */
+    static lv_coord_t column_dsc[] = {
+        LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
+    };
+    static lv_coord_t row_dsc[] = {
+        LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
+    };
     lv_obj_set_grid_dsc_array(s_grid, column_dsc, row_dsc);
 
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
@@ -836,24 +1025,26 @@ static void gui_refresh_ui(void)
         selected_total_cents +=
             (int64_t)product->quantity * (int64_t)product->price_cents;
 
-        lv_label_set_text_fmt(cell->qty_label, "%u/%u",
-                              (unsigned)product->quantity,
-                              (unsigned)product->stock);
+        lv_label_set_text_fmt(cell->qty_label, "Cant: %u",
+                              (unsigned)product->quantity);
 
         if (product->stock == 0) {
-            lv_label_set_text(cell->price_label, "AGOTADO");
-            lv_obj_set_style_text_color(cell->price_label,
+            lv_label_set_text_fmt(cell->header_label, "%s\nAGOTADO",
+                                  product->name);
+            lv_obj_set_style_text_color(cell->header_label,
                                         lv_color_hex(0xE74C3C), 0);
         } else if (product->price_cents == GUI_PRICE_UNSET_CENTS) {
-            lv_label_set_text(cell->price_label, "Sin precio");
-            lv_obj_set_style_text_color(cell->price_label,
+            lv_label_set_text_fmt(cell->header_label, "%s\nSin precio",
+                                  product->name);
+            lv_obj_set_style_text_color(cell->header_label,
                                         lv_color_hex(0x95A5A6), 0);
         } else {
-            lv_label_set_text_fmt(cell->price_label, "RD$ %u.%02u",
+            lv_label_set_text_fmt(cell->header_label, "%s\nRD$ %u.%02u",
+                                  product->name,
                                   (unsigned)(product->price_cents / 100),
                                   (unsigned)(product->price_cents % 100));
-            lv_obj_set_style_text_color(cell->price_label,
-                                        lv_color_hex(0xF1C40F), 0);
+            lv_obj_set_style_text_color(cell->header_label,
+                                        lv_color_hex(0xECF0F1), 0);
         }
 
         const bool can_edit = input_enabled && product->stock > 0;
@@ -873,13 +1064,13 @@ static void gui_refresh_ui(void)
         }
     }
 
-    if (snapshot.balance_cents <= 0) {
-        lv_label_set_text(s_balance_label, "Ingrese monedas");
-    } else {
-        lv_label_set_text_fmt(s_balance_label, "Saldo: RD$ %lld.%02lld",
-                              (long long)(snapshot.balance_cents / 100),
-                              (long long)(snapshot.balance_cents % 100));
-    }
+    lv_label_set_text_fmt(s_balance_label, "Saldo: RD$ %lld.%02lld",
+                          (long long)(snapshot.balance_cents / 100),
+                          (long long)(snapshot.balance_cents % 100));
+
+    lv_label_set_text_fmt(s_total_label, "Monto a Pagar: RD$ %lld.%02lld",
+                          (long long)(selected_total_cents / 100),
+                          (long long)(selected_total_cents % 100));
 
     if (snapshot.order_active) {
         lv_label_set_text_fmt(s_status_label, "Despachando... %u unidad(es)",
@@ -889,9 +1080,7 @@ static void gui_refresh_ui(void)
     } else if (selected_units == 0) {
         lv_label_set_text(s_status_label, "Seleccione productos");
     } else {
-        lv_label_set_text_fmt(s_status_label, "Total: RD$ %lld.%02lld",
-                              (long long)(selected_total_cents / 100),
-                              (long long)(selected_total_cents % 100));
+        lv_label_set_text(s_status_label, "Pulse [ Confirmar ]");
     }
 
     const bool can_confirm =
@@ -1183,12 +1372,11 @@ esp_err_t gui_display_init(void)
     s_modal_total_cents = 0;
     s_modal_balance_cents = 0;
 
-    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-        s_products[i].quantity = 0;
-#if GUI_USE_DEMO_PRICES
-        s_products[i].price_cents = k_demo_prices[i];
-#endif
-    }
+    /*
+     * Precios de la tabla compilada + saldo y stock persistidos en NVS.
+     * Si la NVS esta vacia se arranca con saldo 0 y GUI_DEFAULT_STOCK.
+     */
+    storage_load_locked();
 
     esp_err_t err = init_display_hardware();
     if (err != ESP_OK) {
@@ -1294,6 +1482,42 @@ esp_err_t gui_display_unmount_sd(void)
     }
 
     ESP_LOGI(TAG, "MicroSD desmontada");
+    return err;
+}
+
+/* ==========================================================================
+ *  API publica: persistencia en NVS
+ * ========================================================================== */
+
+esp_err_t gui_display_load_state(void)
+{
+    if (s_state_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    storage_load_locked();
+    s_ui_dirty = true;
+
+    state_unlock();
+    ui_notify();
+    return ESP_OK;
+}
+
+esp_err_t gui_display_save_state(void)
+{
+    if (s_state_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    const esp_err_t err = storage_save_locked();
+
+    state_unlock();
     return err;
 }
 
@@ -1424,6 +1648,7 @@ esp_err_t gui_display_set_product_stock(uint8_t index, uint8_t stock)
         s_products[index].quantity = stock;
     }
     s_ui_dirty = true;
+    (void)storage_save_locked();
 
     state_unlock();
     ui_notify();
@@ -1473,6 +1698,7 @@ void gui_display_set_balance_cents(int64_t cents)
     }
     s_balance_cents = (cents < 0) ? 0 : cents;
     s_ui_dirty = true;
+    (void)storage_save_locked();
     state_unlock();
     ui_notify();
 }
@@ -1484,6 +1710,8 @@ void gui_display_add_balance_cents(uint32_t cents)
     }
     s_balance_cents += (int64_t)cents;
     s_ui_dirty = true;
+    /* El saldo debe sobrevivir a un corte de energia. */
+    (void)storage_save_locked();
     state_unlock();
     ui_notify();
 }
@@ -1774,6 +2002,13 @@ void gui_display_on_unit_dispatched(uint8_t channel)
     if (s_products[channel].stock > 0) {
         s_products[channel].stock--;
     }
+
+    /*
+     * Persistencia: cada unidad cobrada deja el nuevo saldo y stock en NVS.
+     * Si el guardado falla, la venta sigue siendo valida en RAM y se registra
+     * el error; nunca se deshace el cobro por un fallo de flash.
+     */
+    (void)storage_save_locked();
 
     ESP_LOGI(TAG, "Cobrada unidad del canal %u (RD$ %lld.%02lld). Saldo: RD$ %lld.%02lld",
              (unsigned)(channel + 1), (long long)(price / 100),

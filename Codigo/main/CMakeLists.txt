@@ -7,6 +7,7 @@
 #    - esp_timer  : marca de tiempo en microsegundos para la ventana de rafaga.
 #    - sdmmc      : pila SD/MMC y estructuras de la tarjeta.
 #    - fatfs      : sistema de archivos FAT para leer las imagenes de la SD.
+#    - nvs_flash  : persistencia de saldo y stock entre reinicios.
 #    - esp_lcd    : capa de abstraccion de paneles y bus SPI de pantalla.
 #    - lvgl       : motor grafico (8.4.x, configurado por Kconfig).
 #
@@ -42,6 +43,7 @@ idf_component_register(
         esp_timer
         sdmmc
         fatfs
+        nvs_flash
         esp_lcd
         esp_lcd_st7796
         esp_lcd_touch

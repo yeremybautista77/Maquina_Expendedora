@@ -5,21 +5,20 @@
  * Fuente de verdad: Documentacion/Documentacion Tecnica/
  *                  documento_de_arquitectura_tecnico.md
  *
- * IMPORTANTE (hardware confirmado 2026-10-24):
+ * IMPORTANTE (hardware confirmado fisicamente 2026-10-25):
  *  - El monedero entrega pulsos por el optoacoplador PC817 sobre IO35.
  *    GPIO35 es un pin SOLO DE ENTRADA y NO dispone de pull-up interno. La placa
  *    ya tiene una resistencia externa de 10 kOhm a 3.3 V, por lo que el firmware
  *    DEBE dejar el pull-up interno DESHABILITADO (no cargar el optoacoplador).
  *    La ISR se dispara por flanco de bajada (senal activa en LOW).
- *  - Los dos PCF8574 comparten el mismo bus I2C:
+ *  - Los dos PCF8574 comparten el mismo bus I2C (SDA=IO32, SCL=IO25):
  *        0x20 -> modulo de relees (motores de 12 V), activo en LOW
  *        0x21 -> modulo de sensores de fin de carrera (contacto seco a GND),
  *                LOW = final de carrera alcanzado
- *  - Pantalla TFT ST7796 de 320x480 (vertical) por SPI (HSPI/SPI2).
+ *  - Pantalla TFT ST7796 de 320x480 (vertical) por SPI dedicado (HSPI/SPI2).
  *  - Tactil resistivo XPT2046 por SPI, compartiendo el bus de la TFT.
- *  - MicroSD por VSPI (SPI3): CS=5, CLK=18, MISO=19, MOSI=23 (confirmado).
- *  - Los pines de la TFT y del tactil estan marcados como TODO_VERIFICAR_PINES:
- *    son valores provisionales hasta confirmar el esquematico de la placa.
+ *  - MicroSD por VSPI (SPI3): CS=5, CLK=18, MISO=19, MOSI=23.
+ *  - Todos los pines de este archivo estan CONFIRMADOS contra la placa real.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -49,8 +48,8 @@ extern "C" {
  *  Bus I2C y expansores PCF8574 (Seccion 4)
  * ========================================================================== */
 #define BOARD_I2C_PORT              I2C_NUM_0
-#define BOARD_I2C_SDA_GPIO          GPIO_NUM_21   /* VERIFICAR en la placa */
-#define BOARD_I2C_SCL_GPIO          GPIO_NUM_22   /* VERIFICAR en la placa */
+#define BOARD_I2C_SDA_GPIO          GPIO_NUM_32   /* Confirmado: SDA */
+#define BOARD_I2C_SCL_GPIO          GPIO_NUM_25   /* Confirmado: SCL */
 #define BOARD_I2C_CLOCK_HZ          100000         /* 100 kHz: robusto con cables largos */
 
 #define BOARD_I2C_ADDR_RELAY        0x20    /* PCF8574: P0..P5 -> relees de motor */
@@ -81,11 +80,7 @@ extern "C" {
 /* ==========================================================================
  *  Pantalla TFT ST7796 320x480 (SPI2 / HSPI)
  *
- *  IMPORTANTE: los pines de la TFT NO aparecen en el documento de arquitectura.
- *  Los valores de abajo corresponden al pinout habitual de la placa
- *  "ESP32-32E 4.0 inch" y estan marcados con TODO_VERIFICAR_PINES. Si el
- *  esquematico de la placa difiere, cambiar SOLO estas macros.
- *
+ *  Pines confirmados fisicamente en la placa "ESP32-32E 4.0 inch".
  *  El bus SPI2 se comparte con el tactil XPT2046 (mismo SCLK/MOSI/MISO y un CS
  *  independiente). La MicroSD usa SPI3 (VSPI) y no comparte bus.
  * ========================================================================== */
@@ -93,13 +88,13 @@ extern "C" {
 #define BOARD_TFT_H_RES                 320
 #define BOARD_TFT_V_RES                 480
 
-#define BOARD_TFT_PIN_SCLK              GPIO_NUM_14   /* TODO_VERIFICAR_PINES */
-#define BOARD_TFT_PIN_MOSI              GPIO_NUM_13   /* TODO_VERIFICAR_PINES */
-#define BOARD_TFT_PIN_MISO              GPIO_NUM_12   /* TODO_VERIFICAR_PINES */
-#define BOARD_TFT_PIN_CS                GPIO_NUM_15   /* TODO_VERIFICAR_PINES */
-#define BOARD_TFT_PIN_DC                GPIO_NUM_2    /* TODO_VERIFICAR_PINES */
-#define BOARD_TFT_PIN_RST               GPIO_NUM_NC   /* TODO_VERIFICAR_PINES: suele estar atado a EN */
-#define BOARD_TFT_PIN_BL                GPIO_NUM_27   /* TODO_VERIFICAR_PINES */
+#define BOARD_TFT_PIN_SCLK              GPIO_NUM_14   /* Confirmado */
+#define BOARD_TFT_PIN_MOSI              GPIO_NUM_13   /* Confirmado */
+#define BOARD_TFT_PIN_MISO              GPIO_NUM_12   /* Confirmado */
+#define BOARD_TFT_PIN_CS                GPIO_NUM_15   /* Confirmado */
+#define BOARD_TFT_PIN_DC                GPIO_NUM_2    /* Confirmado */
+#define BOARD_TFT_PIN_RST               GPIO_NUM_NC   /* Confirmado: RST atado a EN */
+#define BOARD_TFT_PIN_BL                GPIO_NUM_27   /* Confirmado */
 
 #define BOARD_TFT_PIXEL_CLOCK_HZ        (40 * 1000 * 1000)
 #define BOARD_TFT_CMD_BITS              8
@@ -113,7 +108,7 @@ extern "C" {
 #define BOARD_TFT_BL_LEDC_FREQ_HZ       5000
 #define BOARD_TFT_BL_DUTY_ON            1023
 
-/* Ajustes de orientacion/color del panel. TODO_VERIFICAR_PINES / TODO_CALIBRAR */
+/* Ajustes de orientacion/color del panel (vertical, BGR e inversion confirmados). */
 #define BOARD_TFT_USE_BGR_ORDER         1
 #define BOARD_TFT_INVERT_COLOR          1
 #define BOARD_TFT_SWAP_XY               0
@@ -128,8 +123,8 @@ extern "C" {
  *  definir BOARD_TOUCH_PIN_IRQ con un GPIO valido y configurar el callback.
  * ========================================================================== */
 #define BOARD_TOUCH_SPI_HOST            BOARD_TFT_SPI_HOST
-#define BOARD_TOUCH_PIN_CS              GPIO_NUM_33   /* TODO_VERIFICAR_PINES */
-#define BOARD_TOUCH_PIN_IRQ             GPIO_NUM_NC   /* TODO_VERIFICAR_PINES */
+#define BOARD_TOUCH_PIN_CS              GPIO_NUM_33   /* Confirmado */
+#define BOARD_TOUCH_PIN_IRQ             GPIO_NUM_NC   /* Confirmado: sin IRQ, sondeo */
 #define BOARD_TOUCH_SPI_CLOCK_HZ        (1 * 1000 * 1000)
 
 /* Ajustes de calibracion del tactil. TODO_CALIBRAR con la pantalla real. */

@@ -5,17 +5,22 @@
  *
  * Arquitectura (Seccion 5):
  *
- *   +-----------------------------------------------------+
- *   |  [P1]        [P2]        [P3]                       |
- *   |  foto        foto        foto                       |  Grid 2 columnas
- *   |  - Cant:0 +  - Cant:0 +  - Cant:0 +                 |  x 3 filas
- *   |  [P4]        [P5]        [P6]                       |
- *   |  foto        foto        foto                       |
- *   |  - Cant:0 +  - Cant:0 +  - Cant:0 +                 |
- *   +-----------------------------------------------------+
- *   |  Saldo: "Ingrese monedas" o "RD$ XX.00"             |
- *   |  [ Confirmar compra ]                               |  Panel inferior
- *   +-----------------------------------------------------+
+ *   +---------------------------+
+ *   |  P1            |  P2      |
+ *   |  RD$ 40.00     |  RD$ 50.00
+ *   |  [Espacio Imagen]         |  Grid estricto 2x3
+ *   |  [-] Cant: 0 [+]          |  (~83 % superior)
+ *   |---------------------------|
+ *   |  P3            |  P4      |
+ *   |  ...                      |
+ *   |---------------------------|
+ *   |  P5            |  P6      |
+ *   |  ...                      |
+ *   +---------------------------+
+ *   |  Saldo: RD$ XX.00         |
+ *   |  Monto a Pagar: RD$ XX.00 |  Panel inferior
+ *   |  Seleccione productos     |  [ Confirmar ]
+ *   +---------------------------+
  *
  *   Al confirmar se muestra un modal con el resumen y [Si] / [No].
  *
@@ -100,6 +105,30 @@ esp_err_t gui_display_mount_sd(void);
  * @brief Desmonta la MicroSD y libera el bus SPI si lo inicializo este modulo.
  */
 esp_err_t gui_display_unmount_sd(void);
+
+/**
+ * @brief Carga saldo y stock de los 6 productos desde la NVS.
+ *
+ * Los precios NO se persisten: siempre se toman de la tabla compilada
+ * (RD$ 40..90). Si la NVS esta vacia o no esta inicializada se aplican los
+ * valores por defecto (saldo 0 y 10 unidades por producto).
+ *
+ * gui_display_init() la invoca automaticamente. Es seguro llamarla de nuevo
+ * desde cualquier tarea: solo toca estado protegido y despierta a task_gui.
+ *
+ * @return ESP_OK, ESP_ERR_INVALID_STATE (Mutex no creado) o ESP_ERR_TIMEOUT.
+ */
+esp_err_t gui_display_load_state(void);
+
+/**
+ * @brief Guarda saldo y stock actuales en la NVS.
+ *
+ * Se llama internamente al acreditar monedas y al cobrar cada unidad
+ * despachada. Es seguro desde cualquier tarea (nunca desde una ISR).
+ *
+ * @return ESP_OK o el error de NVS.
+ */
+esp_err_t gui_display_save_state(void);
 
 /**
  * @brief Marca toda la pantalla para redibujarse en el proximo ciclo de GUI.

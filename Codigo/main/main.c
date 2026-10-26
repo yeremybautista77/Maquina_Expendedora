@@ -32,6 +32,7 @@
 #include "freertos/task.h"
 #include "gui_display.h"
 #include "motor_control.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "app_main";
 
@@ -167,6 +168,23 @@ void app_main(void)
     ESP_LOGI(TAG, " ESP-IDF %s | heap libre: %" PRIu32 " bytes",
              esp_get_idf_version(), (uint32_t)esp_get_free_heap_size());
     ESP_LOGI(TAG, "==================================================");
+
+    /*
+     * 0. NVS: saldo y stock sobreviven a los cortes de energia.
+     *    Debe inicializarse antes de gui_display_init(), que carga el estado.
+     */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES ||
+        nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS incompatible (%s); se borra y se reinicializa",
+                 esp_err_to_name(nvs_err));
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    if (nvs_err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS no disponible (%s); saldo y stock no se guardaran",
+                 esp_err_to_name(nvs_err));
+    }
 
     /*
      * 1. Mutex global ANTES de crear cualquier tarea que pueda despachar.

@@ -4,12 +4,12 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-10-24
-> **Estado global:** fase **P0 (interfaz gráfica) implementada, compilando sin
-> errores ni warnings y versionada en Git**. El grid 2×3, el táctil, el modal y
-> el cobro diferido por unidad están integrados. Queda la puesta en marcha en
-> hardware real (pines, calibración táctil), precios/stock reales y las tareas
-> P1 (homing, encolado atómico, NVS).
+> **Última actualización:** 2026-10-25
+> **Estado global:** **pines confirmados, homing, NVS y rediseño de GUI
+> implementados**; compila sin errores ni warnings. El grid 2×3, el táctil, el
+> modal y el cobro diferido por unidad están integrados. Queda la puesta en
+> marcha en hardware real (calibración táctil), el encolado atómico y el modo
+> administración.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -23,16 +23,19 @@
       BMP de la MicroSD, panel de saldo y modal `[Sí] [No]`.
 - [x] Concurrencia: Mutex de estado y LVGL solo desde `task_gui`.
 - [x] Cobro diferido: confirmar solo encola; se cobra por unidad entregada.
-- [x] Build limpio (573 216 B, 45 % libre) y `Codigo/` commiteado.
+- [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
+- [x] *Homing* secuencial de los 6 canales al arrancar (timeout 10 s).
+- [x] Persistencia en NVS de saldo y stock (carga al arrancar, guardado por moneda/unidad).
+- [x] GUI rediseñada: grid 2×3, cabecera nombre+precio, placeholder
+      `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
+- [x] Build limpio (590 256 B, 44 % libre) y `Codigo/` versionado.
 
 **Falta (en orden de prioridad):**
 
-1. Probar en la placa real y verificar pines de TFT/táctil (`TODO_VERIFICAR_PINES`).
-2. Calibrar el táctil (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`).
-3. Cargar precios y stock reales (hoy demo con `GUI_USE_DEMO_PRICES 1`).
-4. Rutina de *homing* al arrancar (P1).
-5. Encolado atómico de la compra (P1).
-6. Persistencia en NVS de stock/ventas (P1) y extras V2.0.
+1. Calibrar el táctil en la placa real (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`).
+2. Encolado atómico de la compra (P1).
+3. Modo administración para reponer stock y ajustar precios.
+4. Extras V2.0 (telemetría Wi-Fi, audio).
 
 ### Últimos cambios de esta sesión
 
@@ -105,8 +108,7 @@
 | `0x20` | Módulo de relés (motores 12 V) | P0..P5 → canales 1..6 |
 | `0x21` | Sensores de fin de carrera | P0..P5 → canales 1..6 |
 
-- I2C0, **SDA = IO21, SCL = IO22** (`VERIFICAR` contra el esquemático),
-  **100 kHz**.
+- I2C0, **SDA = IO32, SCL = IO25** (confirmado físicamente), **100 kHz**.
 - Relé **activo en LOW**; el driver invierte el bit al escribir.
 - Sensor: micro-switch cierra a **GND** ⇒ **LOW = final de carrera alcanzado**.
 - En reposo se asume el sensor en **LOW** (mecanismo en posición inicial).
@@ -133,8 +135,8 @@
 | Táctil | **XPT2046** resistivo, comparte SPI2, CS propio |
 | Retroiluminación | LEDC PWM |
 
-Pines (marcados `TODO_VERIFICAR_PINES` en `board_config.h`, corresponden al
-pinout habitual de la ESP32-32E 4.0"):
+Pines **confirmados físicamente** en la ESP32-32E 4.0"
+(`board_config.h`):
 
 | Señal | GPIO |
 | :--- | :--- |
@@ -198,8 +200,8 @@ cd Codigo
 
 ```
 Project build complete.
-maquina_expendedora.bin → 573 216 bytes (0x8bf20)
-Partición app 0x100000 → 45 % libre
+maquina_expendedora.bin → 590 256 bytes (0x901b0)
+Partición app 0x100000 → 44 % libre
 Sin warnings del compilador en los archivos del proyecto.
 ```
 
@@ -229,7 +231,8 @@ Codigo/
 
 ### Dependencias (`main/CMakeLists.txt`)
 
-Base: `freertos`, `driver`, `esp_timer`, `sdmmc`, `fatfs`, `esp_lcd`, `lvgl`.
+Base: `freertos`, `driver`, `esp_timer`, `sdmmc`, `fatfs`, `nvs_flash`,
+`esp_lcd`, `lvgl`.
 Gestionadas vía `main/idf_component.yml`: `esp_lcd_st7796`, `esp_lcd_touch`,
 `esp_lcd_touch_xpt2046` (se exponen como componentes normales).
 Además se añaden condicionalmente si existen (compatibilidad IDF 5.2 → 6.x):
@@ -243,7 +246,7 @@ Además se añaden condicionalmente si existen (compatibilidad IDF 5.2 → 6.x):
   primero).
 - Heap de LVGL: 64 KB.
 - FS stdio con letra `S` y raíz `/sdcard`; decodificador BMP habilitado.
-- Fuentes Montserrat 12/14/16/20.
+- Fuentes Montserrat 10/12/14/16/20.
 - El tick **no** usa `LV_TICK_CUSTOM` (el Kconfig de LVGL 8.4 no expone
   `LV_TICK_CUSTOM_SYS_TIME_EXPR`): `gui_task` inyecta `lv_tick_inc()` cada ciclo.
 
@@ -255,16 +258,20 @@ Además se añaden condicionalmente si existen (compatibilidad IDF 5.2 → 6.x):
 
 Orden de arranque en `app_main()`:
 
-1. Crea `g_dispatch_mutex` (Mutex global de despacho) **antes** de cualquier tarea.
-2. Crea el bus I2C (`i2c_new_master_bus`, driver moderno `driver/i2c_master.h`).
-3. `motor_control_init(i2c_bus)` → configura ambos PCF8574 y la cola.
-4. `coin_acceptor_init()` + callback `on_coin_inserted`.
-5. `gui_display_mount_sd()` y luego `gui_display_init()`.
-   - Si la SD falla: solo warning, el sistema sigue (placeholder `IMG`).
+1. `nvs_flash_init()` (con borrado y reinicialización si la partición es
+   incompatible). Debe ir antes de la GUI, que carga saldo/stock.
+2. Crea `g_dispatch_mutex` (Mutex global de despacho) **antes** de cualquier tarea.
+3. Crea el bus I2C (`i2c_new_master_bus`, driver moderno `driver/i2c_master.h`).
+4. `motor_control_init(i2c_bus)` → configura ambos PCF8574, la cola y ejecuta el
+   *homing* secuencial de los 6 canales.
+5. `coin_acceptor_init()` + callback `on_coin_inserted`.
+6. `gui_display_mount_sd()` y luego `gui_display_init()` (carga la NVS).
+   - Si la SD falla: solo warning, el sistema sigue (placeholder
+     `[Espacio Imagen]`).
    - Si la GUI falla: solo warning, el sistema sigue (sin pantalla).
-6. `motor_control_set_event_callback(on_motor_event, NULL)` **antes** de crear
+7. `motor_control_set_event_callback(on_motor_event, NULL)` **antes** de crear
    `task_despacho`.
-7. Crea las 3 tareas.
+8. Crea las 3 tareas.
 
 | Tarea | Prioridad | Pila | Función |
 | :--- | :---: | :---: | :--- |
@@ -297,6 +304,12 @@ Orden de arranque en `app_main()`:
   PCF8574.
 - Mutex interno `s_i2c_mutex` para serializar el bus I2C.
 - Cola FIFO de despacho (`motor_request_t { channel, quantity }`, longitud 8).
+- `motor_control_home_all()` (invocada al final de `motor_control_init()`):
+  - Lee los 6 sensores de 0x21; los canales ya en LOW no se tocan.
+  - Para cada canal fuera de reposo: toma `g_dispatch_mutex`, energiza su relé
+    y espera el LOW del sensor con timeout de **10 s**.
+  - Es secuencial (un motor a la vez) y apaga el relé siempre, incluso si vence
+    el timeout. Un fallo de homing no bloquea el arranque.
 - `motor_control_dispatch_one()`:
 
   1. Toma `g_dispatch_mutex` (timeout configurable).
@@ -325,8 +338,17 @@ Orden de arranque en `app_main()`:
 
 - Modelo de 6 productos: nombre, ruta de imagen (`/sdcard/productos/pN.bmp`),
   precio, stock y cantidad seleccionada.
-- Valores actuales: **stock = 10** y **precios de demostración** con
-  `GUI_USE_DEMO_PRICES 1` (RD$ 25/15/10/20/35/50) para poder probar el flujo.
+- Valores actuales: **stock inicial = 10** (persistido en NVS) y precios de la
+  tabla compilada `k_product_prices`: **RD$ 40/50/60/70/80/90**
+  (4000..9000 centavos). Ya no existe `GUI_USE_DEMO_PRICES`.
+- Layout:
+  - Grid estricto **2 columnas × 3 filas** en el 83 % superior (400 px).
+  - Cada celda es un Flex en columna centrado: cabecera `Producto N\nRD$ XX.00`,
+    recuadro gris de 52×52 con el BMP o `[Espacio Imagen]`, y fila Flex con
+    `[-]`, `Cant: N` y `[+]` (botones de 34×34 px).
+  - Panel inferior fijo de 80 px (17 %) con Flex en fila:
+    `Saldo: RD$ 0.00`, `Monto a Pagar: RD$ 0.00` (reactivo) y botón
+    `[ Confirmar ]` de 118×64 px.
 - Reglas implementadas:
   - Cantidad entre 0 y `min(stock, 10)`.
   - `[-]`/`[+]` ajustan y recortan contra stock.
@@ -338,6 +360,13 @@ Orden de arranque en `app_main()`:
   - Inicializa SPI2, panel ST7796 (`esp_lcd`), retroiluminación LEDC y XPT2046.
   - Registra display e input en LVGL, crea el grid 2×3 y el panel inferior.
   - Crea el Mutex de estado antes de cualquier acceso concurrente.
+  - Carga saldo/stock desde NVS (`storage_load_locked()`).
+- Persistencia:
+  - `gui_display_load_state()` / `gui_display_save_state()` son la API pública.
+  - Namespace NVS `vending`: clave `balance` (int64) y clave `stock` (blob de
+    6 bytes).
+  - Se guarda al acreditar monedas, al cambiar stock y en cada unidad cobrada
+    (`gui_display_on_unit_dispatched()`).
 - `task_gui` inyecta `lv_tick_inc()`, llama a `lv_timer_handler()` y refresca
   los widgets solo cuando el estado cambia (notificación + snapshot).
 - Concurrencia: `s_state_mutex` protege saldo, stock, cantidades, modal y pedido.
@@ -379,13 +408,13 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 - [x] **Integrar la pantalla real (`esp_lcd`)**
   - ST7796 320×480 por SPI2 con `esp_lcd_new_panel_io_spi` +
     `esp_lcd_new_panel_st7796`, retroiluminación por LEDC.
-  - Pines en `board_config.h` marcados `TODO_VERIFICAR_PINES`.
+  - Pines **confirmados** en `board_config.h`.
   - *Criterio:* la pantalla enciende y muestra el grid.
 
 - [x] **Integrar LVGL y el táctil**
   - LVGL 8.4.0 por Kconfig + XPT2046 en modo sondeo.
-  - Grid 2×3, botones `[-] [+]`, contador `Cantidad:N`, panel de saldo y modal
-    `Confirmar compra [Sí] [No]`.
+  - Grid 2×3, botones `[-] [+]`, contador `Cant: N`, panel con saldo,
+    monto a pagar y modal `Confirmar compra [Sí] [No]`.
   - `lv_timer_handler()` + `lv_tick_inc()` en `task_gui`.
   - *Criterio:* se puede seleccionar producto y confirmar solo con el dedo
     (pendiente de calibrar el táctil en la placa real).
@@ -397,24 +426,24 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
   - *Criterio:* sin carreras ni *asserts* de LVGL al insertar monedas mientras
     se pulsa la pantalla.
 
-- [ ] **Configurar precios y stock reales**
-  - Hoy hay precios de demostración (`GUI_USE_DEMO_PRICES 1`) y stock fijo = 10.
-  - Cargar productos desde la MicroSD (p. ej. `/sdcard/productos.json`) o
-    definir tabla en código.
-  - *Criterio:* 6 productos con nombre, precio y stock editables sin recompilar
-    (preferible) o al menos en un único sitio.
+- [x] **Configurar precios y stock reales**
+  - Tabla compilada `k_product_prices` con RD$ 40/50/60/70/80/90.
+  - Stock inicial de 10 por producto y persistencia en NVS.
+  - *Criterio:* los 6 productos tienen nombre y precio en un único sitio
+    (`gui_display.c`), y el stock sobrevive a un reinicio.
 
-- [ ] **Calibrar el táctil y verificar pines**
+- [ ] **Calibrar el táctil**
   - Ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y` y
     `BOARD_TFT_USE_BGR_ORDER/INVERT_COLOR` con la pantalla real.
-  - Confirmar los pines `TODO_VERIFICAR_PINES` contra el esquemático.
+  - Los pines ya están confirmados; solo falta la calibración fina.
 
 ### P1 — Robustez y consistencia
 
-- [ ] **Rutina de *homing***
-  - Hoy, si un canal no está en reposo, el despacho se rechaza para siempre.
-  - Al arrancar: leer sensores y, si un canal no está en LOW, girar el motor
-    hasta encontrarlo (con timeout y límite de intentos).
+- [x] **Rutina de *homing***
+  - `motor_control_home_all()` se ejecuta al final de `motor_control_init()`.
+  - Lee los 6 sensores; si un canal está fuera de reposo, energiza su relé hasta
+    el LOW con timeout de 10 s por canal.
+  - Es secuencial y usa `g_dispatch_mutex`; el relé se apaga siempre.
   - *Criterio:* tras un corte de energía a mitad de vuelta, el sistema se
     recupera solo.
 
@@ -433,9 +462,11 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
     solicitud con lista de ítems.
   - *Criterio:* una compra se acepta completa o se rechaza completa.
 
-- [ ] **Persistencia en NVS**
-  - Guardar stock, ventas/recaudación y configuración entre reinicios.
-  - *Criterio:* apagar y encender conserva stock y contadores.
+- [x] **Persistencia en NVS**
+  - Namespace `vending`: saldo (`balance`) y stock de los 6 productos (`stock`).
+  - Se carga en `gui_display_init()` y se guarda al acreditar monedas y al
+    cobrar cada unidad entregada.
+  - *Criterio:* apagar y encender conserva saldo y stock.
 
 - [ ] **Modo administración**
   - Rellenar stock, cambiar precios, ver ventas, probar motores/sensores.
@@ -464,13 +495,13 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 | # | Problema | Impacto | Dónde |
 | :---: | :--- | :--- | :--- |
-| 1 | Pines de TFT/táctil sin verificar (`TODO_VERIFICAR_PINES`) | Pantalla/táctil podría no responder | `board_config.h` |
-| 2 | Precios de demostración y stock fijo | No reflejan inventario real | `gui_display.c` |
+| 1 | ~~Pines de TFT/táctil sin verificar~~ **Resuelto** | Pines confirmados físicamente | `board_config.h` |
+| 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Tabla 4000..9000 + stock en NVS | `gui_display.c` |
 | 3 | ~~Stock/saldo se descuentan antes del motor~~ **Resuelto** | Cobro por unidad confirmada | `gui_display_on_unit_dispatched()` |
 | 4 | Encolado no atómico | Compra parcialmente aceptada si la cola se llena | `gui_display_confirm_purchase()` |
-| 5 | Sin *homing*; canal fuera de reposo queda bloqueado | Máquina inoperativa tras fallo | `motor_control_dispatch_one()` |
+| 5 | ~~Sin *homing*~~ **Resuelto** | Homing secuencial con timeout de 10 s | `motor_control_home_all()` |
 | 6 | ~~Estado de GUI sin mutex~~ **Resuelto** | `s_state_mutex` protege todo el estado | `gui_display.c` |
-| 7 | Pines I2C (21/22) sin verificar contra el esquemático | Puede no comunicarse | `board_config.h` |
+| 7 | ~~Pines I2C sin verificar~~ **Resuelto** | SDA=IO32, SCL=IO25 | `board_config.h` |
 | 8 | Táctil sin calibrar (ejes/espejo) | Pulsaciones en zona equivocada | `BOARD_TOUCH_*` |
 | 9 | Sin pruebas automatizadas ni CI | Regresiones silenciosas | repo |
 | 10 | ~~`Codigo/` sin commitear~~ **Resuelto** | Ya versionado en `main` | repo |
@@ -482,7 +513,12 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
   pull-up por software: cargaría el optoacoplador.
 - **El relé se apaga en el bloque `cleanup`.** No eliminar esa garantía al
   refactorizar: es la protección contra motores girando indefinidamente.
-- **`g_dispatch_mutex` debe existir antes de crear `task_despacho`.**
+- **`g_dispatch_mutex` debe existir antes de crear `task_despacho`.** El homing
+  también lo usa, así que debe crearse antes de `motor_control_init()`.
+- **NVS antes de la GUI:** `nvs_flash_init()` debe ejecutarse antes de
+  `gui_display_init()` para que la carga de saldo/stock funcione.
+- **El guardado NVS ocurre con el Mutex de estado tomado.** Es una escritura
+  corta (una por moneda o unidad); no añadir esperas largas dentro del lock.
 - **El cobro vive en un solo sitio:** `gui_display_on_unit_dispatched()`. No
   volver a descontar saldo/stock en `gui_display_confirm_purchase()`.
 - **LVGL solo se toca desde `task_gui`.** Los callbacks de `motor_task` y
@@ -525,7 +561,10 @@ Al arrancar, el log esperado es similar a:
 ```
 app_main: Maquina Expendedora - 6 canales (ESP32-32E 4.0")
 app_main: Mutex de despacho creado (un motor a la vez)
-app_main: Bus I2C0 listo (SDA=IO21, SCL=IO22, 100000 Hz)
+app_main: Bus I2C0 listo (SDA=IO32, SCL=IO25, 100000 Hz)
+motor_control: Homing inicial de 6 canales (timeout 10000 ms por canal)
+motor_control: Homing completado: los 6 canales estan en reposo
+gui_display: NVS vacia: saldo RD$ 0.00 y stock inicial 10 por producto
 gui_display: MicroSD montada en /sdcard
 gui_display: Tactil XPT2046 listo (CS=IO33, 1000000 Hz)
 gui_display: ST7796 listo (320x480, SPI2, 40 MHz)
@@ -550,27 +589,26 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
    ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`. Repetir hasta que el botón
    pulsado coincida con el dibujado.
 5. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
-   reiniciar. Sin archivos se muestra el placeholder `IMG`.
-6. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
+   reiniciar. Sin archivos se muestra `[Espacio Imagen]`.
+6. **Homing:** reiniciar con un motor fuera de reposo y comprobar en el log que
+   el canal vuelve a LOW en menos de 10 s y que solo se energiza un relé a la vez.
+7. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
    con el valor correcto.
-7. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
+8. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
    saldo baja **solo cuando el motor termina la vuelta**.
-8. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
-   que el pedido se cancela sin cobrar las unidades no entregadas.
+9. **Persistencia:** apagar y encender; el saldo y el stock deben conservarse.
+10. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
+    que el pedido se cancela sin cobrar las unidades no entregadas.
 
 ---
 
 ## 9. Preguntas abiertas (datos que faltan)
 
-1. ¿Los pines de la TFT/táctil de esta placa coinciden con los asumidos
-   (`TODO_VERIFICAR_PINES`)? Confirmar contra el esquemático.
-2. ¿SDA/SCL reales de la placa son IO21/IO22?
-3. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
+1. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
    (Algunos módulos de 5 V con optoacoplador necesitan adaptador de nivel).
-4. ¿Precios y stock reales de los 6 productos?
-5. ¿Se requiere modo administración? ¿Cómo se accede (pantalla, SD, Wi-Fi)?
-6. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
-7. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
+2. ¿Se requiere modo administración? ¿Cómo se accede (pantalla, SD, Wi-Fi)?
+3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
+4. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
    las unidades que salieron? (Hoy se cobran solo las entregadas).
 
 ---
@@ -581,7 +619,7 @@ Se considerará la versión 1.0 funcional cuando:
 
 1. La pantalla muestra el grid 2×3 con imágenes desde la SD.
 2. El táctil permite ajustar cantidades y confirmar con modal.
-3. Los precios y el stock son configurables sin recompilar.
+3. Los precios están en una tabla única y el stock persiste en NVS.
 4. Insertar monedas actualiza el saldo en pantalla en < 1 s.
 5. Confirmar una compra despacha los productos **uno a uno**, sin reinicios.
 6. Si un despacho falla, **no se cobra** lo no entregado (hoy ya se cumple por
@@ -600,8 +638,8 @@ Se considerará la versión 1.0 funcional cuando:
   SD obligatoria, IO35 con pull-up externo).
 - **No compiles directamente** en la ruta de OneDrive: usa `compilar.ps1`.
 - **No edites** `C:\Users\asus\esp\maquina_expendedora` (copia temporal).
-- Antes de cambiar pines, confirma con el usuario/el esquemático: los de la
-  TFT/táctil están marcados `TODO_VERIFICAR_PINES` y los I2C como `VERIFICAR`.
+- Los pines de `board_config.h` están **confirmados físicamente** (I2C 32/25,
+  TFT/táctil y MicroSD). No los cambies sin verificar de nuevo la placa.
 - La GUI ya está implementada: **no bloquees `task_gui`** con esperas largas y
   no llames a LVGL desde `task_monedero` ni desde `motor_task`.
 - Si tocas el flujo de compra, mantén el cobro **solo** en

@@ -33,12 +33,12 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 - Alimentar los **PCF8574 a 3.3 V** (no 5 V) para mantener los niveles del bus I2C.
 - Confirmar que los **módulos de relé conmutan de forma fiable con 3.3 V** en su
   entrada; algunos módulos de 5 V con optoacoplador necesitan un adaptador de nivel.
-- **MicroSD confirmada en VSPI**: CS=IO5, CLK=IO18, MISO=IO19, MOSI=IO23.
-- **Pines de la TFT y del táctil sin documentar**: los valores actuales
-  (`SCLK=14, MOSI=13, MISO=12, CS=15, DC=2, RST=NC, BL=27, táctil CS=33`)
-  corresponden al pinout habitual de la ESP32-32E 4.0" y están marcados con
-  `TODO_VERIFICAR_PINES` en `board_config.h`. Ajustar solo esas macros.
-- Los pines I2C (21/22) siguen marcados `VERIFICAR`.
+- **Pines confirmados físicamente** (ver `board_config.h`):
+  - I2C (PCF8574 0x20/0x21): **SDA=IO32, SCL=IO25**, 100 kHz.
+  - TFT ST7796 (SPI2/HSPI): **SCLK=14, MOSI=13, MISO=12, CS=15, DC=2,
+    RST=NC, BL=27**.
+  - Táctil XPT2046: **CS=33, IRQ=NC** (modo sondeo).
+  - MicroSD (SPI3/VSPI): **CS=5, CLK=18, MISO=19, MOSI=23**.
 
 ### Activos gráficos en la MicroSD
 
@@ -47,8 +47,8 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 ```
 
 LVGL los abre como `S:/productos/pN.bmp` (FS stdio con letra `S` y raíz
-`/sdcard`). Si falta un archivo, la celda muestra el placeholder `IMG` y la
-interfaz sigue funcionando.
+`/sdcard`). Si falta un archivo, la celda muestra el recuadro gris con
+`[Espacio Imagen]` y la interfaz sigue funcionando.
 
 ## Entorno instalado en este equipo
 
@@ -121,13 +121,22 @@ Codigo/
 - **Motores:** relé activo en LOW, sensor de fin de carrera a GND. Secuencia:
   verificar reposo → energizar → esperar salida de reposo → esperar retorno →
   apagar siempre → liberar Mutex.
+- ***Homing* al arrancar:** lee los 6 sensores de 0x21 y, si un canal está fuera
+  de reposo, energiza su relé hasta que el sensor marque LOW. Es secuencial, usa
+  `g_dispatch_mutex` y tiene un timeout de seguridad de 10 s por canal.
 - **Eventos de despacho:** `motor_task` emite `MOTOR_EVENT_UNIT_DONE` por cada
   unidad entregada, `MOTOR_EVENT_REQUEST_FAILED` si un motor falla y
   `MOTOR_EVENT_IDLE` al vaciar la cola. `main.c` los adapta a la GUI.
-- **GUI:** grid 2×3 con imagen, nombre, precio y `[-] Cantidad:N [+]`; panel
-  inferior con saldo y botón *Confirmar*; modal de resumen `[Sí] [No]` y toast.
+- **GUI:** grid estricto 2×3 (≈83 % superior) con cabecera
+  `Producto N\nRD$ XX.00`, recuadro de imagen o `[Espacio Imagen]`, y
+  `[-] Cant: N [+]`. Panel inferior fijo (≈17 %) con `Saldo:`, `Monto a Pagar:`
+  reactivo y botón grande `[ Confirmar ]`; modal `[Sí] [No]` y toast.
   El estado (saldo, stock, cantidades, pedido) está protegido por un Mutex y
   **todas** las llamadas a LVGL ocurren en `task_gui`.
+- **Persistencia NVS:** `nvs_flash_init()` en `main.c`; el saldo y el stock de
+  los 6 productos se cargan al arrancar y se guardan al acreditar monedas y al
+  cobrar cada unidad despachada. Los precios viven en la tabla compilada
+  (RD$ 40/50/60/70/80/90).
 - **Cobro diferido (corrección del riesgo #3):** al confirmar, la GUI **solo
   encola** el pedido; no descuenta saldo ni stock. El descuento ocurre en
   `gui_display_on_unit_dispatched()`, únicamente cuando el motor confirma una
@@ -136,12 +145,8 @@ Codigo/
 
 ## Pendiente (iterativo)
 
-1. Verificar contra el esquemático los pines de la TFT/táctil
-   (`TODO_VERIFICAR_PINES`) y los I2C (21/22).
-2. Calibrar el táctil (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`, `TODO_CALIBRAR`).
-3. Añadir una rutina de *homing*: el despacho exige que el sensor de fin de
-   carrera esté en LOW (mecanismo en reposo) antes de energizar el motor.
-4. Cargar precios/stock reales desde la MicroSD (hoy se usan precios de
-   demostración con `GUI_USE_DEMO_PRICES 1`).
-5. Hacer atómico el encolado (hoy se encola producto por producto).
-6. Añadir NVS para persistir stock/ventas y telemetría Wi-Fi (V2.0).
+1. Calibrar el táctil en la placa real
+   (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`, `TODO_CALIBRAR`).
+2. Hacer atómico el encolado (hoy se encola producto por producto).
+3. Añadir modo administración para reponer stock y ajustar precios.
+4. Telemetría Wi-Fi y audio (V2.0).
