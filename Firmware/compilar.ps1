@@ -5,7 +5,7 @@
 .DESCRIPTION
     ESP-IDF no tolera bien las rutas con acentos ni espacios largos: ccache y
     kconfiglib fallan con "Illegal byte sequence" / "Could not open sdkconfig".
-    Por eso este script sincroniza Codigo/ a una ruta ASCII corta
+    Por eso este script sincroniza Firmware/ a una ruta ASCII corta
     (C:\Users\asus\esp\maquina_expendedora) y compila alli, dejando el build
     fuera de OneDrive.
 

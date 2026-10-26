@@ -102,7 +102,7 @@ El panel está oculto para el usuario final y se usa para mantenimiento de la m�
 
 ```
 Maquina_Expendedora/
-├── Codigo/
+├── Firmware/
 ├── Diseño_electronico/
 ├── Diseño_mecanico/
 ├── Documentacion/

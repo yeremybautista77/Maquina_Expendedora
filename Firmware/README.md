@@ -72,7 +72,7 @@ LVGL los abre como `S:/productos/pN.bmp` (FS stdio con letra `S` y raíz
 ## Compilar y flashear
 
 ```powershell
-# Desde esta carpeta (Codigo/)
+# Desde esta carpeta (Firmware/)
 .\compilar.ps1                              # build
 .\compilar.ps1 -Clean                       # build limpio
 .\compilar.ps1 -Flash -Port COM3            # build + flash
@@ -95,7 +95,7 @@ idf.py -B C:\Users\asus\esp\build_maquina build
 ## Estructura
 
 ```
-Codigo/
+Firmware/
 ├── CMakeLists.txt          # Proyecto: maquina_expendedora
 ├── compilar.ps1            # Sincroniza a ruta ASCII y compila/flashea
 ├── ESTADO_DEL_PROYECTO.md  # Estado actual y pendientes (handoff para IA)

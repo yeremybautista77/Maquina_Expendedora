@@ -39,7 +39,7 @@
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
-- [x] Build limpio (**611 856 B**, 42 % libre) y `Codigo/` versionado.
+- [x] Build limpio (**611 856 B**, 42 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -201,7 +201,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Flash | 4 MB |
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
-| Carpeta de código | `Codigo/` (este directorio) |
+| Carpeta de código | `Firmware/` (este directorio) |
 | Repositorio Git | Sí. `main` sincronizado con `origin/main` e incluye la expansión del modo administración |
 
 ### Restricciones que no se deben romper
@@ -309,7 +309,7 @@ Pines **confirmados físicamente** en la ESP32-32E 4.0"
 ### ⚠️ Problema importante: ruta con acentos
 
 La ruta real del proyecto contiene acentos y espacios
-(`...\Tecnológico de Las Américas...\Proyecto Final Maquina Expendedora\Codigo`).
+(`...\Tecnológico de Las Américas...\Proyecto Final Maquina Expendedora\Firmware`).
 Con esa ruta:
 
 - `ccache` aborta con `filesystem error: Cannot convert character sequence:
@@ -317,11 +317,11 @@ Con esa ruta:
 - `kconfiglib` no puede abrir `sdkconfig` (la ruta se corrompe a `\u251c\u2502...`).
 
 **Solución adoptada:** compilar desde una copia en ruta ASCII.
-El script `compilar.ps1` sincroniza `Codigo/` → `C:\Users\asus\esp\maquina_expendedora`
+El script `compilar.ps1` sincroniza `Firmware/` → `C:\Users\asus\esp\maquina_expendedora`
 y compila allí con el build fuera de OneDrive.
 
 ```powershell
-cd Codigo
+cd Firmware
 .\compilar.ps1                              # build
 .\compilar.ps1 -Clean                       # build limpio
 .\compilar.ps1 -Flash -Port COM3            # build + flash
@@ -350,7 +350,7 @@ Sin warnings del compilador en los archivos del proyecto.
 ## 4. Estructura de archivos
 
 ```
-Codigo/
+Firmware/
 ├── CMakeLists.txt              # Proyecto "maquina_expendedora"
 ├── sdkconfig.defaults          # Target esp32, 4 MB, tick 1 ms, LVGL, XPT2046
 ├── compilar.ps1                # Sync a ruta ASCII + build/flash
@@ -698,7 +698,7 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
 | 7 | ~~Pines I2C sin verificar~~ **Resuelto** | SDA=IO32, SCL=IO25 | `board_config.h` |
 | 8 | Táctil sin calibrar (ejes/espejo) | Pulsaciones en zona equivocada | `BOARD_TOUCH_*` |
 | 9 | Sin pruebas automatizadas ni CI | Regresiones silenciosas | repo |
-| 10 | ~~`Codigo/` sin commitear~~ **Resuelto** | Ya versionado en `main` | repo |
+| 10 | ~~`Firmware/` sin commitear~~ **Resuelto** | Ya versionado en `main` | repo |
 
 ### Notas de implementación delicadas
 
@@ -731,7 +731,7 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
 ## 8. Cómo verificar el estado actual
 
 ```powershell
-cd Codigo
+cd Firmware
 .\compilar.ps1
 ```
 
