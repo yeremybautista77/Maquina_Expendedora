@@ -100,6 +100,15 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Timeout para tomar el Mutex de estado (no debe bloquear a motor_task). */
 #define GUI_STATE_LOCK_TIMEOUT_MS   100
 
+/**
+ * Duracion de la pulsacion larga que abre el modo administracion.
+ * Se configura en el driver de entrada (LVGL 8.4).
+ */
+#define GUI_ADMIN_LONG_PRESS_MS     3000
+
+/** Lado del boton invisible de la esquina superior izquierda. */
+#define GUI_ADMIN_HOTSPOT_SIZE      40
+
 /* --- Persistencia (NVS) --------------------------------------------------- */
 
 /** Espacio de nombres NVS propio del inventario. */
@@ -174,7 +183,6 @@ static TaskHandle_t s_gui_task_handle = NULL;
 typedef struct {
     bool active;                            /**< Hay un pedido despachandose. */
     bool failed;                            /**< Un motor fallo. */
-    bool enqueue_failed;                    /**< No se pudo encolar todo. */
     uint8_t reserved[GUI_PRODUCT_COUNT];    /**< Unidades pendientes de cobro. */
     uint8_t requested[GUI_PRODUCT_COUNT];   /**< Unidades solicitadas. */
     uint32_t total_units;                   /**< Unidades del pedido. */
@@ -255,6 +263,15 @@ static lv_obj_t *s_toast_box = NULL;
 static lv_obj_t *s_toast_label = NULL;
 static lv_timer_t *s_toast_timer = NULL;
 
+/*
+ * Modo administracion: boton invisible en la esquina superior izquierda que se
+ * activa con una pulsacion larga de 3 s. El overlay se crea y se destruye
+ * siempre desde task_gui (callbacks de LVGL).
+ */
+static lv_obj_t *s_admin_hotspot = NULL;
+static lv_obj_t *s_admin_overlay = NULL;
+static bool s_admin_open = false;
+
 /* --- Estado de la MicroSD ------------------------------------------------- */
 
 static sdmmc_card_t *s_sd_card = NULL;
@@ -309,7 +326,7 @@ static void order_finalize_locked(void)
     s_order.active = false;
     s_order.pending_units = 0;
 
-    if (s_order.failed || s_order.enqueue_failed) {
+    if (s_order.failed) {
         if (s_order.delivered_units == 0) {
             set_toast_locked("Pedido cancelado. No se cobro nada.");
         } else {
@@ -835,6 +852,178 @@ static void create_toast(void)
     }
 }
 
+/* ==========================================================================
+ *  Modo administracion (pulsacion larga en la esquina superior izquierda)
+ * ========================================================================== */
+
+static void destroy_admin_overlay(void)
+{
+    if (s_admin_overlay != NULL) {
+        /*
+         * Borrado diferido: es seguro aunque se llame desde el callback de uno
+         * de los botones del propio overlay (LVGL 8.4).
+         */
+        lv_obj_del_async(s_admin_overlay);
+        s_admin_overlay = NULL;
+    }
+    s_admin_open = false;
+}
+
+static void on_admin_close_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    destroy_admin_overlay();
+}
+
+static void on_admin_reset_stock_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    bool reset_done = false;
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        if (s_order.active) {
+            set_toast_locked("Espere a que termine el despacho");
+            s_ui_dirty = true;
+        } else {
+            for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+                s_products[i].stock = GUI_DEFAULT_STOCK;
+                s_products[i].quantity = 0;
+            }
+
+            const esp_err_t save_err = storage_save_locked();
+            set_toast_locked(save_err == ESP_OK
+                                 ? "Stock restablecido a 10 unidades"
+                                 : "Stock restablecido; fallo al guardar NVS");
+            s_ui_dirty = true;
+            reset_done = true;
+        }
+        state_unlock();
+    }
+
+    if (reset_done) {
+        ESP_LOGI(TAG, "Modo administracion: stock restablecido a %u por producto",
+                 (unsigned)GUI_DEFAULT_STOCK);
+        destroy_admin_overlay();
+    }
+    ui_notify();
+}
+
+static void build_admin_overlay(void)
+{
+    if (s_admin_overlay != NULL) {
+        return;
+    }
+
+    uint8_t stock[GUI_PRODUCT_COUNT] = {0};
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+            stock[i] = s_products[i].stock;
+        }
+        state_unlock();
+    }
+
+    s_admin_overlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_admin_overlay, BOARD_TFT_H_RES, BOARD_TFT_V_RES);
+    lv_obj_set_pos(s_admin_overlay, 0, 0);
+    lv_obj_set_style_bg_color(s_admin_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_admin_overlay, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(s_admin_overlay, 0, 0);
+    lv_obj_set_style_radius(s_admin_overlay, 0, 0);
+    lv_obj_clear_flag(s_admin_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    /* Captura todos los clics: bloquea productos y panel inferior. */
+    lv_obj_add_flag(s_admin_overlay, LV_OBJ_FLAG_CLICKABLE);
+    s_admin_open = true;
+
+    lv_obj_t *card = lv_obj_create(s_admin_overlay);
+    lv_obj_set_size(card, 290, 290);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x1E2A38), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x3A5068), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 10, 0);
+    lv_obj_set_style_pad_all(card, 12, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, "Modo Administracion");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xECF0F1), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *stock_label = lv_label_create(card);
+    lv_label_set_text_fmt(stock_label,
+                          "Stock actual:\n%u / %u / %u\n%u / %u / %u",
+                          (unsigned)stock[0], (unsigned)stock[1],
+                          (unsigned)stock[2], (unsigned)stock[3],
+                          (unsigned)stock[4], (unsigned)stock[5]);
+    lv_obj_set_style_text_align(stock_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(stock_label, lv_color_hex(0xD5DBDB), 0);
+    lv_obj_set_style_text_font(stock_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(stock_label, LV_ALIGN_TOP_MID, 0, 34);
+
+    lv_obj_t *hint = lv_label_create(card);
+    lv_label_set_text(hint, "Reinicia las existencias de los 6 productos.");
+    lv_obj_set_width(hint, 250);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x95A5A6), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 104);
+
+    lv_obj_t *reset_btn = lv_btn_create(card);
+    lv_obj_set_size(reset_btn, 250, 46);
+    lv_obj_set_style_radius(reset_btn, 8, 0);
+    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0x27AE60), 0);
+    lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_MID, 0, -52);
+    lv_obj_add_event_cb(reset_btn, on_admin_reset_stock_clicked,
+                        LV_EVENT_CLICKED, NULL);
+    lv_obj_t *reset_label = lv_label_create(reset_btn);
+    lv_label_set_text(reset_label, "Rellenar Stock (Reset a 10)");
+    lv_obj_set_style_text_font(reset_label, &lv_font_montserrat_14, 0);
+    lv_obj_center(reset_label);
+
+    lv_obj_t *close_btn = lv_btn_create(card);
+    lv_obj_set_size(close_btn, 250, 40);
+    lv_obj_set_style_radius(close_btn, 8, 0);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x7F8C8D), 0);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_event_cb(close_btn, on_admin_close_clicked,
+                        LV_EVENT_CLICKED, NULL);
+    lv_obj_t *close_label = lv_label_create(close_btn);
+    lv_label_set_text(close_label, "Cerrar");
+    lv_obj_set_style_text_font(close_label, &lv_font_montserrat_14, 0);
+    lv_obj_center(close_label);
+}
+
+static void on_admin_hotspot_long_pressed(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_LONG_PRESSED) {
+        return;
+    }
+    ESP_LOGI(TAG, "Pulsacion larga: abriendo modo administracion");
+    build_admin_overlay();
+}
+
+static void create_admin_hotspot(void)
+{
+    s_admin_hotspot = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_admin_hotspot, GUI_ADMIN_HOTSPOT_SIZE,
+                    GUI_ADMIN_HOTSPOT_SIZE);
+    lv_obj_set_pos(s_admin_hotspot, 0, 0);
+    lv_obj_set_style_bg_opa(s_admin_hotspot, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_admin_hotspot, 0, 0);
+    lv_obj_set_style_radius(s_admin_hotspot, 0, 0);
+    lv_obj_set_style_pad_all(s_admin_hotspot, 0, 0);
+    lv_obj_clear_flag(s_admin_hotspot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_admin_hotspot, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_admin_hotspot, on_admin_hotspot_long_pressed,
+                        LV_EVENT_LONG_PRESSED, NULL);
+}
+
 static void build_ui(void)
 {
     lv_obj_t *screen = lv_scr_act();
@@ -874,6 +1063,8 @@ static void build_ui(void)
 
     create_bottom_panel();
     create_toast();
+    /* Se crea al final para quedar por encima del grid y del toast. */
+    create_admin_hotspot();
 }
 
 /* ==========================================================================
@@ -1025,7 +1216,7 @@ static void gui_refresh_ui(void)
     state_unlock();
 
     const bool input_enabled =
-        !snapshot.order_active && !snapshot.modal_open;
+        !snapshot.order_active && !snapshot.modal_open && !s_admin_open;
 
     uint32_t selected_units = 0;
     int64_t selected_total_cents = 0;
@@ -1347,6 +1538,13 @@ static esp_err_t init_lvgl(void)
         lv_indev_drv_init(&s_indev_drv);
         s_indev_drv.type = LV_INDEV_TYPE_POINTER;
         s_indev_drv.read_cb = lv_touch_read_cb;
+        /*
+         * Pulsacion larga global de 3 s: es la que abre el modo
+         * administracion desde el boton invisible. Los botones normales solo
+         * reaccionan a CLICKED, por lo que no se ven afectados.
+         * En LVGL 8.4 se configura en el driver antes de registrarlo.
+         */
+        s_indev_drv.long_press_time = GUI_ADMIN_LONG_PRESS_MS;
         if (lv_indev_drv_register(&s_indev_drv) == NULL) {
             ESP_LOGW(TAG, "No se pudo registrar el tactil en LVGL");
         }
@@ -1855,7 +2053,8 @@ bool gui_display_is_order_active(void)
 
 esp_err_t gui_display_confirm_purchase(void)
 {
-    uint8_t to_enqueue[GUI_PRODUCT_COUNT] = {0};
+    motor_request_t batch[GUI_PRODUCT_COUNT];
+    uint8_t batch_count = 0;
     uint32_t total_units = 0;
     int64_t total_cents = 0;
 
@@ -1887,7 +2086,10 @@ esp_err_t gui_display_confirm_purchase(void)
 
         total_units += quantity;
         total_cents += (int64_t)quantity * (int64_t)s_products[i].price_cents;
-        to_enqueue[i] = quantity;
+
+        batch[batch_count].channel = i;
+        batch[batch_count].quantity = quantity;
+        batch_count++;
     }
 
     if (total_units == 0 || total_cents <= 0) {
@@ -1903,6 +2105,20 @@ esp_err_t gui_display_confirm_purchase(void)
     }
 
     /*
+     * Encolado atomico (riesgo #4): se valida la capacidad para el pedido
+     * COMPLETO antes de registrar nada. Si no cabe, el modal sigue abierto,
+     * las cantidades se conservan y el usuario puede reducirlas.
+     */
+    const esp_err_t capacity_err = motor_control_check_capacity(batch_count);
+    if (capacity_err != ESP_OK) {
+        set_toast_locked("Cola ocupada: reduzca la cantidad");
+        s_ui_dirty = true;
+        state_unlock();
+        ui_notify();
+        return capacity_err;
+    }
+
+    /*
      * Se registra el pedido y se limpian las cantidades ANTES de encolar, para
      * que los callbacks de motor_task encuentren el estado consistente aunque
      * la primera unidad se despache inmediatamente.
@@ -1914,8 +2130,8 @@ esp_err_t gui_display_confirm_purchase(void)
     s_order.total_cents = total_cents;
 
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-        s_order.reserved[i] = to_enqueue[i];
-        s_order.requested[i] = to_enqueue[i];
+        s_order.reserved[i] = s_products[i].quantity;
+        s_order.requested[i] = s_products[i].quantity;
         s_products[i].quantity = 0;
     }
 
@@ -1926,48 +2142,27 @@ esp_err_t gui_display_confirm_purchase(void)
     ui_notify();
 
     /*
-     * Solo se encola: NO se descuenta saldo ni stock. Eso ocurre en
-     * gui_display_on_unit_dispatched() cuando el motor confirma cada unidad.
+     * Un solo lote todo-o-nada: si falla, no quedo ninguna solicitud en cola y
+     * se revierte el pedido completo devolviendo las cantidades al usuario.
      */
-    esp_err_t enqueue_error = ESP_OK;
-    uint8_t failed_index = 0;
-
-    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-        if (to_enqueue[i] == 0) {
-            continue;
-        }
-
-        const esp_err_t err = motor_control_enqueue(i, to_enqueue[i]);
-        if (err != ESP_OK) {
-            enqueue_error = err;
-            failed_index = i;
-            ESP_LOGE(TAG, "No se pudo encolar el producto %u: %s",
-                     (unsigned)(i + 1), esp_err_to_name(err));
-            break;
-        }
-    }
+    const esp_err_t enqueue_error =
+        motor_control_enqueue_batch(batch, batch_count);
 
     if (enqueue_error != ESP_OK) {
-        /*
-         * Las solicitudes que no llegaron a encolarse no se cobraran. Las que
-         * ya estaban encoladas siguen su curso y se cobran por unidad.
-         */
-        if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
-            for (uint8_t i = failed_index; i < GUI_PRODUCT_COUNT; i++) {
-                const uint8_t pending = s_order.reserved[i];
-                s_order.reserved[i] = 0;
-                if (pending >= s_order.pending_units) {
-                    s_order.pending_units = 0;
-                } else {
-                    s_order.pending_units -= pending;
-                }
+        ESP_LOGE(TAG, "No se pudo encolar el pedido completo: %s",
+                 esp_err_to_name(enqueue_error));
+
+        if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS * 10)) {
+            memset(&s_order, 0, sizeof(s_order));
+            for (uint8_t i = 0; i < batch_count; i++) {
+                s_products[batch[i].channel].quantity = batch[i].quantity;
             }
-            s_order.enqueue_failed = true;
-            if (s_order.pending_units == 0) {
-                order_finalize_locked();
-            }
+            s_modal_open = true;
+            set_toast_locked("No se pudo encolar el pedido. Intente de nuevo.");
             s_ui_dirty = true;
             state_unlock();
+        } else {
+            ESP_LOGE(TAG, "No se pudo revertir el pedido (Mutex de estado)");
         }
         ui_notify();
         return enqueue_error;

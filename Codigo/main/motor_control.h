@@ -187,11 +187,48 @@ esp_err_t motor_control_read_sensor(uint8_t channel, bool *out_triggered);
 /**
  * @brief Encola una solicitud de despacho (una entrada por producto).
  *
+ * Envoltorio de motor_control_enqueue_batch() para una sola solicitud.
+ *
  * @param channel  Canal 0..5.
  * @param quantity Unidades a despachar (>= 1).
  * @return ESP_OK, ESP_ERR_INVALID_ARG o ESP_ERR_TIMEOUT si la cola esta llena.
  */
 esp_err_t motor_control_enqueue(uint8_t channel, uint8_t quantity);
+
+/**
+ * @brief Comprueba si la cola puede aceptar un pedido completo de forma atomica.
+ *
+ * Se usa antes de registrar un pedido en la GUI: si no hay espacio para TODAS
+ * las solicitudes, el pedido se rechaza entero y no se encola ninguna.
+ *
+ * La comprobacion se hace bajo el Mutex interno de la cola, por lo que el valor
+ * devuelto es una instantanea coherente. Como solo la GUI produce solicitudes,
+ * el espacio disponible no puede reducirse entre esta comprobacion y
+ * motor_control_enqueue_batch(); aun asi, el encolado por lotes vuelve a
+ * validar la capacidad para ser robusto ante futuros productores.
+ *
+ * @param count Numero de solicitudes del pedido (1..MOTOR_QUEUE_LENGTH).
+ * @return ESP_OK si hay espacio para todas; ESP_ERR_TIMEOUT si no lo hay;
+ *         ESP_ERR_INVALID_ARG si count es 0 o mayor que la cola;
+ *         ESP_ERR_INVALID_STATE si el modulo no esta inicializado.
+ */
+esp_err_t motor_control_check_capacity(uint8_t count);
+
+/**
+ * @brief Encola un pedido completo de forma atomica (todo o nada).
+ *
+ * Valida primero que haya huecos libres para las `count` solicitudes. Si no
+ * hay espacio suficiente, NO encola ninguna y devuelve ESP_ERR_TIMEOUT, de
+ * modo que el usuario nunca recibe una compra parcial por culpa de la cola.
+ *
+ * @param requests Array de `count` solicitudes (canal 0..5, quantity >= 1).
+ * @param count    Numero de solicitudes (1..MOTOR_QUEUE_LENGTH).
+ * @return ESP_OK si se encolaron todas; ESP_ERR_TIMEOUT si la cola no tiene
+ *         espacio para el pedido completo; ESP_ERR_INVALID_ARG si algun dato es
+ *         invalido; ESP_ERR_INVALID_STATE si el modulo no esta inicializado.
+ */
+esp_err_t motor_control_enqueue_batch(const motor_request_t *requests,
+                                      uint8_t count);
 
 /**
  * @brief Registra el callback de eventos de despacho.

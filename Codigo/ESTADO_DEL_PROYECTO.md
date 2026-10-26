@@ -5,12 +5,12 @@
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
 > **Última actualización:** 2026-10-25
-> **Estado global:** **firmware de la v1.0 completo en laboratorio y subido a
-> GitHub** (`origin/main` = `80f3282`). Pines confirmados, *homing*, NVS,
-> layout Flex 2×3 y cobro diferido por unidad implementados; compila sin errores
-> ni warnings. **El flasheo no se pudo ejecutar**: la placa no está conectada
-> (no hay ningún puerto COM presente). Queda la validación en hardware, el
-> encolado atómico y el modo administración.
+> **Estado global:** **fase P1 de software completada** (encolado atómico y modo
+> administración) y subida a GitHub en esta sesión. Pines confirmados, *homing*,
+> NVS, layout Flex 2×3 y cobro diferido por unidad implementados; compila sin
+> errores ni warnings (`maquina_expendedora.bin` = **592 512 B**, 43 % libre).
+> **El flasheo sigue pendiente**: no hay placa conectada ni puerto COM. Queda la
+> validación en hardware (táctil, colores, homing, NVS, cola llena y modo admin).
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -25,29 +25,38 @@
       modal `[Sí] [No]`.
 - [x] Concurrencia: Mutex de estado y LVGL solo desde `task_gui`.
 - [x] Cobro diferido: confirmar solo encola; se cobra por unidad entregada.
+- [x] Encolado atómico: lote todo-o-nada con `s_queue_mutex` y
+      `motor_control_check_capacity()`; si no cabe el pedido completo, se
+      rechaza entero y la GUI pide reducir la cantidad.
+- [x] Modo administración oculto: pulsación larga de 3 s en la esquina superior
+      izquierda → overlay "Modo Administración" → "Rellenar Stock (Reset a 10)"
+      con guardado en NVS.
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
 - [x] *Homing* secuencial de los 6 canales al arrancar (timeout 10 s).
 - [x] Persistencia en NVS de saldo y stock (carga al arrancar, guardado por moneda/unidad).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
-- [x] Build limpio (589 936 B, 44 % libre) y `Codigo/` versionado.
+- [x] Build limpio (**592 512 B**, 43 % libre) y `Codigo/` versionado.
 
 **Falta (en orden de prioridad):**
 
 1. **Validar en la placa real**: conectar la placa, flashear y probar táctil
-   (calibración), layout 2×3, colores/orientación, homing y NVS.
-2. Encolado atómico de la compra (P1).
-3. Modo administración para reponer stock y ajustar precios (P1).
-4. Pruebas automatizadas y CI (transversal).
-5. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
+   (calibración), layout 2×3, colores/orientación, homing, NVS, rechazo por
+   cola llena y modo administración.
+2. Pruebas automatizadas y CI (transversal).
+3. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
+4. Ampliar el modo administración (cambio de precios, ver ventas, probar
+   motores/sensores); hoy solo reinicia el stock a 10.
 
 **Estado de las acciones de esta sesión:**
 
-- [x] Layout 2×3 corregido con Flex `ROW_WRAP` y celdas al 48 %.
-- [x] Documento actualizado con las respuestas.
-- [x] `git push origin main` → **OK** (`fbe3060..80f3282`).
-- [ ] Flasheo + monitor serie → **no ejecutado**: COM3 no existe y no hay
-      ningún puerto COM presente (placa desconectada o cable solo de carga).
+- [x] Encolado atómico implementado en `motor_control.c/.h` y aplicado en
+      `gui_display_confirm_purchase()`.
+- [x] Modo administración oculto con pulsación larga de 3 s, overlay y reset de
+      stock a 10 persistido en NVS.
+- [x] Build limpio sin warnings → **592 512 B** (`0x90a80`), 43 % libre.
+- [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
+      presente (placa desconectada o cable solo de carga).
 
 ---
 
@@ -117,13 +126,17 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
    `[ Confirmar ]` grande.
 5. **Precios**: tabla compilada `k_product_prices` = **RD$ 40/50/60/70/80/90**;
    eliminado `GUI_USE_DEMO_PRICES`.
-6. **Build**: `maquina_expendedora.bin` = **589 936 B** (`0x90070`), **44 %
+6. **Build**: `maquina_expendedora.bin` = **592 512 B** (`0x90a80`), **43 %
    libre**, sin warnings.
 7. **Docs**: README y este documento actualizados.
 8. **Corrección de layout (posterior a `3fbefa7`)**: el contenedor de productos
    pasó de `LV_LAYOUT_GRID` a **Flex `ROW_WRAP`** con celdas al **48 %** de ancho
    y **127 px** de alto, forzando el 2×3 real (antes los productos podían
-   colapsar en una sola fila). Build nuevo: **589 936 B** (`0x90070`).
+   colapsar en una sola fila). Build de ese cambio: **589 936 B** (`0x90070`).
+9. **P1 de software (esta sesión)**: encolado atómico con `s_queue_mutex` +
+   `motor_control_check_capacity()` + `motor_control_enqueue_batch()`, y modo
+   administración oculto (pulsación larga de 3 s, overlay y reset de stock a 10
+   con guardado en NVS). Build final: **592 512 B** (`0x90a80`).
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -140,8 +153,8 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Persistencia NVS | ✅ Implementado | Probar apagón/reinicio real |
 | GUI 2×3 + panel inferior | ✅ Implementado | Calibrar táctil y colores |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
-| Encolado atómico | ❌ Falta (P1) | Compra puede quedar parcial si la cola se llena |
-| Modo administración | ❌ Falta (P1) | Reponer stock / cambiar precios |
+| Encolado atómico | ✅ Implementado | Probar rechazo con la cola llena en placa |
+| Modo administración | ✅ Implementado | Solo reset de stock; cambiar precios pendiente |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
 | Push a GitHub | ✅ Hecho | `origin/main` = `80f3282` |
@@ -295,8 +308,8 @@ cd Codigo
 
 ```
 Project build complete.
-maquina_expendedora.bin → 589 936 bytes (0x90070)
-Partición app 0x100000 → 44 % libre
+maquina_expendedora.bin → 592 512 bytes (0x90a80)
+Partición app 0x100000 → 43 % libre
 Sin warnings del compilador en los archivos del proyecto.
 ```
 
@@ -559,11 +572,17 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
   - *Pendiente:* decidir si un pedido parcialmente entregado debe
     reembolsarse por completo (hoy las unidades entregadas quedan cobradas).
 
-- [ ] **Encolado atómico**
-  - `gui_display_confirm_purchase()` encola producto por producto; si uno falla,
-    los anteriores ya quedaron encolados.
-  - Validar capacidad total de la cola antes de encolar o usar una sola
-    solicitud con lista de ítems.
+- [x] **Encolado atómico**
+  - `motor_control.c` incorpora `s_queue_mutex`, que serializa la validación de
+    capacidad con el encolado del lote completo.
+  - `motor_control_check_capacity(count)` devuelve `ESP_OK` solo si hay huecos
+    para **todas** las solicitudes; `motor_control_enqueue_batch()` vuelve a
+    validar y encola el lote entero bajo el mismo Mutex.
+  - `gui_display_confirm_purchase()` construye el lote, comprueba la capacidad
+    **antes** de registrar el pedido y, si no cabe, mantiene el modal abierto y
+    muestra `Cola ocupada: reduzca la cantidad`. Si el encolado fallara de forma
+    inesperada, revierte el pedido completo y devuelve las cantidades.
+  - `motor_control_enqueue()` queda como envoltorio de una sola solicitud.
   - *Criterio:* una compra se acepta completa o se rechaza completa.
 
 - [x] **Persistencia en NVS**
@@ -572,10 +591,18 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
     cobrar cada unidad entregada.
   - *Criterio:* apagar y encender conserva saldo y stock.
 
-- [ ] **Modo administración**
-  - Rellenar stock, cambiar precios, ver ventas, probar motores/sensores.
-  - Puede ser una pantalla oculta (p. ej. pulsación larga en una esquina) o por
-    SD.
+- [x] **Modo administración (reset de stock)**
+  - Botón invisible de 40×40 px en la esquina superior izquierda, fuera de los
+    botones `[-] [+]`.
+  - El driver táctil usa `long_press_time = 3000 ms`; al recibir
+    `LV_EVENT_LONG_PRESSED` se abre un overlay a pantalla completa que bloquea
+    los botones de producto.
+  - El overlay muestra el stock actual y el botón
+    **"Rellenar Stock (Reset a 10)"**: pone los 6 productos a 10, limpia las
+    cantidades seleccionadas, guarda en NVS y vuelve a la pantalla principal.
+  - Si hay un pedido en curso, el reset se rechaza con el aviso
+    "Espere a que termine el despacho".
+  - *Pendiente:* cambiar precios, ver ventas y probar motores desde este modo.
 
 ### P2 — Extras / V2.0 (según documento de arquitectura §7)
 
@@ -603,7 +630,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 | 1 | ~~Pines de TFT/táctil sin verificar~~ **Resuelto** | Pines confirmados físicamente | `board_config.h` |
 | 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Tabla 4000..9000 + stock en NVS | `gui_display.c` |
 | 3 | ~~Stock/saldo se descuentan antes del motor~~ **Resuelto** | Cobro por unidad confirmada | `gui_display_on_unit_dispatched()` |
-| 4 | Encolado no atómico | Compra parcialmente aceptada si la cola se llena | `gui_display_confirm_purchase()` |
+| 4 | ~~Encolado no atómico~~ **Resuelto** | Lote todo-o-nada con `s_queue_mutex`; rechazo entero si no cabe | `motor_control_enqueue_batch()` |
 | 5 | ~~Sin *homing*~~ **Resuelto** | Homing secuencial con timeout de 10 s | `motor_control_home_all()` |
 | 6 | ~~Estado de GUI sin mutex~~ **Resuelto** | `s_state_mutex` protege todo el estado | `gui_display.c` |
 | 7 | ~~Pines I2C sin verificar~~ **Resuelto** | SDA=IO32, SCL=IO25 | `board_config.h` |
@@ -712,6 +739,14 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 10. **Persistencia:** apagar y encender; el saldo y el stock deben conservarse.
 11. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
     que el pedido se cancela sin cobrar las unidades no entregadas.
+12. **Modo administración:** mantener pulsada la esquina superior izquierda
+    durante 3 s; debe abrirse el overlay, el botón "Rellenar Stock (Reset a 10)"
+    debe dejar los 6 productos a 10 y el valor debe sobrevivir a un reinicio.
+13. **Encolado atómico:** con la UI normal es difícil llenar la cola (máximo 6
+    líneas por pedido, cola de 8 y un solo pedido a la vez). Para probar el
+    rechazo, reducir temporalmente `MOTOR_QUEUE_LENGTH` a 1 o añadir una prueba
+    de host; el pedido debe rechazarse entero con el aviso
+    "Cola ocupada: reduzca la cantidad".
 
 ---
 

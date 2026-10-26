@@ -31,6 +31,15 @@ static i2c_master_dev_handle_t s_sensor_dev = NULL;
 /** Cola FIFO de solicitudes de despacho. */
 static QueueHandle_t s_dispatch_queue = NULL;
 
+/**
+ * Protege la cola de despacho.
+ *
+ * Serializa la comprobacion de capacidad con el encolado por lotes: mientras
+ * un pedido se valida y se encola, ningun otro productor puede ocupar los
+ * huecos, de modo que el lote es todo-o-nada.
+ */
+static SemaphoreHandle_t s_queue_mutex = NULL;
+
 /** Protege el bus I2C y el registro sombra de relees entre tareas. */
 static SemaphoreHandle_t s_i2c_mutex = NULL;
 
@@ -264,7 +273,8 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
     if (i2c_bus == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_relay_dev != NULL && s_sensor_dev != NULL && s_dispatch_queue != NULL) {
+    if (s_relay_dev != NULL && s_sensor_dev != NULL &&
+        s_dispatch_queue != NULL && s_queue_mutex != NULL) {
         return ESP_OK; /* Ya inicializado. */
     }
 
@@ -310,6 +320,13 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
         goto fail;
     }
 
+    s_queue_mutex = xSemaphoreCreateMutex();
+    if (s_queue_mutex == NULL) {
+        ESP_LOGE(TAG, "Sin memoria para el Mutex de la cola de despacho");
+        err = ESP_ERR_NO_MEM;
+        goto fail;
+    }
+
     s_dispatch_queue = xQueueCreate(MOTOR_QUEUE_LENGTH, sizeof(motor_request_t));
     if (s_dispatch_queue == NULL) {
         ESP_LOGE(TAG, "Sin memoria para la cola de despacho");
@@ -331,6 +348,14 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
     return ESP_OK;
 
 fail:
+    if (s_dispatch_queue != NULL) {
+        vQueueDelete(s_dispatch_queue);
+        s_dispatch_queue = NULL;
+    }
+    if (s_queue_mutex != NULL) {
+        vSemaphoreDelete(s_queue_mutex);
+        s_queue_mutex = NULL;
+    }
     if (s_relay_dev != NULL) {
         i2c_master_bus_rm_device(s_relay_dev);
         s_relay_dev = NULL;
@@ -408,29 +433,98 @@ esp_err_t motor_control_read_sensor(uint8_t channel, bool *out_triggered)
     return ESP_OK;
 }
 
-esp_err_t motor_control_enqueue(uint8_t channel, uint8_t quantity)
+esp_err_t motor_control_check_capacity(uint8_t count)
 {
-    if (channel >= MOTOR_CHANNEL_COUNT || quantity == 0) {
+    if (count == 0 || count > MOTOR_QUEUE_LENGTH) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_dispatch_queue == NULL) {
+    if (s_dispatch_queue == NULL || s_queue_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (xSemaphoreTake(s_queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex de la cola ocupado; no se pudo validar capacidad");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    const UBaseType_t spaces = uxQueueSpacesAvailable(s_dispatch_queue);
+    xSemaphoreGive(s_queue_mutex);
+
+    if (spaces < (UBaseType_t)count) {
+        ESP_LOGW(TAG,
+                 "Capacidad insuficiente: %u solicitud(es), %u hueco(s) libre(s)",
+                 (unsigned)count, (unsigned)spaces);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t motor_control_enqueue_batch(const motor_request_t *requests,
+                                      uint8_t count)
+{
+    if (requests == NULL || count == 0 || count > MOTOR_QUEUE_LENGTH) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (uint8_t i = 0; i < count; i++) {
+        if (requests[i].channel >= MOTOR_CHANNEL_COUNT ||
+            requests[i].quantity == 0) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    if (s_dispatch_queue == NULL || s_queue_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /*
+     * Todo el lote se valida y se encola bajo el mismo Mutex. Como solo la GUI
+     * produce solicitudes y motor_task solo consume, no hay otro productor que
+     * pueda ocupar los huecos entre la comprobacion y los xQueueSend.
+     */
+    if (xSemaphoreTake(s_queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex de la cola ocupado; lote no encolado");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    const UBaseType_t spaces = uxQueueSpacesAvailable(s_dispatch_queue);
+    if (spaces < (UBaseType_t)count) {
+        xSemaphoreGive(s_queue_mutex);
+        ESP_LOGW(TAG,
+                 "Pedido rechazado: %u solicitud(es), solo %u hueco(s) libre(s)",
+                 (unsigned)count, (unsigned)spaces);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        if (xQueueSend(s_dispatch_queue, &requests[i], 0) != pdTRUE) {
+            /*
+             * No puede ocurrir con un unico productor y capacidad validada;
+             * si ocurriera, el pedido quedaria parcial y se informa como error.
+             */
+            xSemaphoreGive(s_queue_mutex);
+            ESP_LOGE(TAG,
+                     "Fallo inesperado al encolar el canal %u (lote parcial)",
+                     (unsigned)(requests[i].channel + 1));
+            return ESP_ERR_TIMEOUT;
+        }
+    }
+
+    xSemaphoreGive(s_queue_mutex);
+
+    for (uint8_t i = 0; i < count; i++) {
+        ESP_LOGI(TAG, "Solicitud encolada: canal %u x %u unidad(es)",
+                 (unsigned)(requests[i].channel + 1),
+                 (unsigned)requests[i].quantity);
+    }
+    return ESP_OK;
+}
+
+esp_err_t motor_control_enqueue(uint8_t channel, uint8_t quantity)
+{
     const motor_request_t request = {
         .channel = channel,
         .quantity = quantity,
     };
-
-    if (xQueueSend(s_dispatch_queue, &request, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(TAG, "Cola de despacho llena; solicitud del canal %u descartada",
-                 (unsigned)(channel + 1));
-        return ESP_ERR_TIMEOUT;
-    }
-
-    ESP_LOGI(TAG, "Solicitud encolada: canal %u x %u unidad(es)",
-             (unsigned)(channel + 1), (unsigned)quantity);
-    return ESP_OK;
+    return motor_control_enqueue_batch(&request, 1);
 }
 
 esp_err_t motor_control_set_event_callback(motor_event_cb_t callback, void *ctx)
@@ -447,8 +541,12 @@ esp_err_t motor_control_set_event_callback(motor_event_cb_t callback, void *ctx)
 
 esp_err_t motor_control_cancel_pending(uint32_t *out_discarded)
 {
-    if (s_dispatch_queue == NULL) {
+    if (s_dispatch_queue == NULL || s_queue_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     uint32_t discarded = 0;
@@ -456,6 +554,8 @@ esp_err_t motor_control_cancel_pending(uint32_t *out_discarded)
     while (xQueueReceive(s_dispatch_queue, &request, 0) == pdTRUE) {
         discarded++;
     }
+
+    xSemaphoreGive(s_queue_mutex);
 
     if (out_discarded != NULL) {
         *out_discarded = discarded;
@@ -472,8 +572,17 @@ bool motor_control_is_busy(void)
     if (s_dispatch_queue == NULL) {
         return false;
     }
-    return s_task_active || s_dispatching ||
-           (uxQueueMessagesWaiting(s_dispatch_queue) > 0);
+
+    UBaseType_t pending = 0;
+    if (s_queue_mutex != NULL &&
+        xSemaphoreTake(s_queue_mutex, 0) == pdTRUE) {
+        pending = uxQueueMessagesWaiting(s_dispatch_queue);
+        xSemaphoreGive(s_queue_mutex);
+    } else {
+        pending = uxQueueMessagesWaiting(s_dispatch_queue);
+    }
+
+    return s_task_active || s_dispatching || (pending > 0);
 }
 
 esp_err_t motor_control_dispatch_one(uint8_t channel, uint32_t mutex_timeout_ms)

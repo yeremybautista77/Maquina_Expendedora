@@ -8,7 +8,7 @@
  *   +---------------------------+
  *   |  P1            |  P2      |
  *   |  RD$ 40.00     |  RD$ 50.00
- *   |  [Espacio Imagen]         |  Grid estricto 2x3
+ *   |  [Espacio Imagen]         |  Layout Flex 2x3
  *   |  [-] Cant: 0 [+]          |  (~83 % superior)
  *   |---------------------------|
  *   |  P3            |  P4      |
@@ -34,6 +34,17 @@
  *   3. Si un motor falla por timeout, motor_task() emite
  *      MOTOR_EVENT_REQUEST_FAILED y descarta el resto de la cola. Las unidades
  *      no entregadas no se cobran ni reducen stock.
+ *
+ * Encolado atomico (correccion del riesgo #4):
+ *   gui_display_confirm_purchase() comprueba la capacidad de la cola para el
+ *   lote COMPLETO antes de registrar el pedido y encola con
+ *   motor_control_enqueue_batch(). Si no cabe, el pedido se rechaza entero y la
+ *   GUI pide reducir la cantidad.
+ *
+ * Modo administracion:
+ *   Pulsacion larga de 3 s sobre un boton invisible en la esquina superior
+ *   izquierda. Abre un overlay con "Rellenar Stock (Reset a 10)", que guarda el
+ *   nuevo stock en NVS y vuelve a la pantalla principal.
  *
  * Concurrencia:
  *   - El estado (saldo, stock, cantidades y pedido en curso) esta protegido por
