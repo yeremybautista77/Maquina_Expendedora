@@ -5,11 +5,12 @@
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
 > **Última actualización:** 2026-10-25
-> **Estado global:** **pines confirmados, homing, NVS y rediseño de GUI
-> implementados**; compila sin errores ni warnings. El grid 2×3, el táctil, el
-> modal y el cobro diferido por unidad están integrados. Queda la puesta en
-> marcha en hardware real (calibración táctil), el encolado atómico y el modo
-> administración.
+> **Estado global:** **firmware de la v1.0 completo en laboratorio**. Pines
+> confirmados, *homing*, NVS, rediseño de GUI y cobro diferido por unidad
+> implementados; compila sin errores ni warnings y está commiteado (`3fbefa7`).
+> Solo queda la **validación en la placa real** (táctil, colores, homing, NVS),
+> el encolado atómico y el modo administración. `main` está **5 commits por
+> delante de `origin/main`** (sin push).
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -32,25 +33,87 @@
 
 **Falta (en orden de prioridad):**
 
-1. Calibrar el táctil en la placa real (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`).
+1. **Validar en la placa real**: táctil (calibración), colores/orientación,
+   homing con un motor fuera de reposo y persistencia NVS tras reinicio.
 2. Encolado atómico de la compra (P1).
-3. Modo administración para reponer stock y ajustar precios.
-4. Extras V2.0 (telemetría Wi-Fi, audio).
+3. Modo administración para reponer stock y ajustar precios (P1).
+4. Pruebas automatizadas y CI (transversal).
+5. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
+6. **`git push`**: 5 commits locales sin subir a `origin/main`.
 
-### Últimos cambios de esta sesión
+---
 
-1. **API táctil actualizada:** se sustituyó la API obsoleta
-   `esp_lcd_touch_get_coordinates()` por `esp_lcd_touch_get_data()`; la build
-   quedó sin warnings.
-2. **Ruta de imágenes LVGL corregida:** el driver `LV_FS_STDIO` concatena
-   `LV_FS_STDIO_PATH` sin separador, así que la ruta ahora es
-   `S:/productos/pN.bmp` (antes se generaba `/sdcardproductos/pN.bmp` y las
-   imágenes no habrían cargado).
-3. **Lifetime del puntero de imagen:** `lv_img_set_src()` no copia la cadena.
-   La ruta se guarda en `gui_cell_widgets_t.image_src[96]` (estático), no en la
-   pila de `create_cell()`.
-4. **Documentación y Git:** README y este documento actualizados; `Codigo/`
-   commiteado en 3 commits (`6d5ec5e`, `c118960`, `37b05c1`).
+## 0. Preguntas para ti (responde debajo de cada una)
+
+> Estas son las dos decisiones que necesito de ti para cerrar esta sesión.
+> Puedes escribir la respuesta en la línea `Respuesta:` de cada pregunta.
+
+### Pregunta 1 — ¿Subo los commits a GitHub?
+
+`main` tiene **5 commits locales sin subir** a `origin/main`
+(`1d8c3e5`, `37b05c1`, `c118960`, `6d5ec5e` y el nuevo `3fbefa7`).
+
+- Opciones: **sí, haz push** / **no, déjalo local** / **espera**.
+- Si dices que sí, ejecuto `git push origin main` (no toco nada más).
+
+**Respuesta:**
+
+### Pregunta 2 — ¿Flasheamos ahora en la placa real?
+
+Para probar homing, NVS y táctil necesito la placa conectada.
+
+- Dime el **puerto COM** (p. ej. `COM3`) o si prefieres que lo detecte.
+- ¿Quieres **monitor serie** para ver los logs de arranque? (sí/no)
+- ¿O lo dejamos para después y seguimos solo con el código?
+
+**Respuesta:**
+
+---
+
+### Últimos cambios de esta sesión (2026-10-25)
+
+Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno de la GUI`
+(10 archivos, +722 / −258).
+
+1. **Pines confirmados** en `board_config.h`: I2C **SDA=IO32 / SCL=IO25**, TFT
+   **14/13/12/15/2/NC/27**, táctil **CS=33 / IRQ=NC** y MicroSD
+   **5/18/19/23**. Se eliminaron todas las etiquetas `TODO_VERIFICAR_PINES`.
+2. **Homing** `motor_control_home_all()`: secuencial (un motor a la vez), toma
+   `g_dispatch_mutex` y usa timeout de **10 s** por canal; se ejecuta al final de
+   `motor_control_init()`. El relé se apaga siempre.
+3. **NVS** (`nvs_flash`): namespace `vending`, claves `balance` (int64) y
+   `stock` (blob de 6 B). Carga en `gui_display_init()`; guarda al acreditar
+   monedas y en cada unidad cobrada.
+4. **GUI rediseñada**: grid estricto **2×3** (400 px), cabecera
+   `Producto N\nRD$ XX.00`, recuadro `[Espacio Imagen]`, `[-] Cant: N [+]`;
+   panel inferior de **80 px** con `Saldo:`, `Monto a Pagar:` reactivo y
+   `[ Confirmar ]` grande.
+5. **Precios**: tabla compilada `k_product_prices` = **RD$ 40/50/60/70/80/90**;
+   eliminado `GUI_USE_DEMO_PRICES`.
+6. **Build**: `maquina_expendedora.bin` = **590 256 B** (`0x901b0`), **44 %
+   libre**, sin warnings.
+7. **Docs**: README y este documento actualizados.
+
+**Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
+rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
+`lv_img_set_src()`.
+
+### Tabla de estado por bloque
+
+| Bloque | Estado | Qué falta / riesgo |
+| :--- | :---: | :--- |
+| Pines de hardware | ✅ Confirmado | — |
+| Monedero (ISR IO35) | ✅ Implementado | Validar valores reales en placa |
+| Despacho I2C + Mutex | ✅ Implementado | Validar con motores reales |
+| *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
+| Persistencia NVS | ✅ Implementado | Probar apagón/reinicio real |
+| GUI 2×3 + panel inferior | ✅ Implementado | Calibrar táctil y colores |
+| Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
+| Encolado atómico | ❌ Falta (P1) | Compra puede quedar parcial si la cola se llena |
+| Modo administración | ❌ Falta (P1) | Reponer stock / cambiar precios |
+| Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
+| V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
+| Push a GitHub | ⏳ Pendiente | 5 commits locales (ver Pregunta 1) |
 
 ---
 
@@ -67,7 +130,7 @@
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí. `Codigo/` versionado en `main` (commits `6d5ec5e`, `c118960`, `37b05c1`); árbol de trabajo limpio |
+| Repositorio Git | Sí. `main` con 5 commits locales por delante de `origin/main`; último: `3fbefa7` (2026-10-25). Árbol de trabajo limpio |
 
 ### Restricciones que no se deben romper
 
@@ -432,6 +495,13 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
   - *Criterio:* los 6 productos tienen nombre y precio en un único sitio
     (`gui_display.c`), y el stock sobrevive a un reinicio.
 
+- [ ] **Validación en la placa real (checklist §8)**
+  - Flashear y confirmar en el log: `ST7796 listo`, `Tactil XPT2046 listo`,
+    `MicroSD montada` y `Homing completado`.
+  - Probar: monedas, compra de 1 unidad, cobro diferido, homing tras un corte y
+    persistencia NVS tras reinicio.
+  - *Criterio:* se completa el checklist de §8 sin fallos.
+
 - [ ] **Calibrar el táctil**
   - Ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y` y
     `BOARD_TFT_USE_BGR_ORDER/INVERT_COLOR` con la pantalla real.
@@ -482,7 +552,8 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 ### Calidad / tooling (transversal)
 
-- [x] Primer commit de `Codigo/` (ya versionado en `main`).
+- [x] Historial de commits del firmware en `main` (último: `3fbefa7`).
+- [ ] **`git push`** de los 5 commits locales a `origin/main` (ver §0).
 - [x] `.gitignore` excluye `build/`, `sdkconfig`, `managed_components/`, etc.
 - [ ] Añadir pruebas de la lógica pura (mapeo de pulsos, total, stock) con
       Unity o tests de host; hoy no hay ninguno.
@@ -604,12 +675,16 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 
 ## 9. Preguntas abiertas (datos que faltan)
 
+> Las dos decisiones **inmediatas** (push y flasheo) están en la
+> [§0](#0-preguntas-para-ti-responde-debajo-de-cada-una).
+
 1. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
    (Algunos módulos de 5 V con optoacoplador necesitan adaptador de nivel).
 2. ¿Se requiere modo administración? ¿Cómo se accede (pantalla, SD, Wi-Fi)?
 3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
 4. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
    las unidades que salieron? (Hoy se cobran solo las entregadas).
+5. ¿Los precios RD$ 40/50/60/70/80/90 son los definitivos de la v1.0?
 
 ---
 
