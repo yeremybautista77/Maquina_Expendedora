@@ -55,6 +55,7 @@
 - [x] Modo administración oculto con pulsación larga de 3 s, overlay y reset de
       stock a 10 persistido en NVS.
 - [x] Build limpio sin warnings → **592 512 B** (`0x90a80`), 43 % libre.
+- [x] `git push origin main` → **OK** (`018f06f..9639a48`).
 - [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
       presente (placa desconectada o cable solo de carga).
 
@@ -157,7 +158,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Modo administración | ✅ Implementado | Solo reset de stock; cambiar precios pendiente |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
-| Push a GitHub | ✅ Hecho | `origin/main` = `80f3282` |
+| Push a GitHub | ✅ Hecho | `origin/main` incluye `9639a48` (P1) y el commit de este documento |
 | Flasheo + monitor | ⏳ Pendiente | Sin puerto COM: conectar la placa |
 
 ---
@@ -175,7 +176,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí. `main` sincronizado con `origin/main` (`80f3282`); árbol de trabajo limpio |
+| Repositorio Git | Sí. `main` sincronizado con `origin/main` (código P1 `9639a48` + este documento); árbol de trabajo limpio |
 
 ### Restricciones que no se deben romper
 
@@ -613,7 +614,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 ### Calidad / tooling (transversal)
 
-- [x] Historial de commits del firmware en `main` (último: `80f3282`).
+- [x] Historial de commits del firmware en `main` (último código: `9639a48`; después solo documentación).
 - [x] **`git push`** de los commits locales a `origin/main` (ver §0).
 - [x] `.gitignore` excluye `build/`, `sdkconfig`, `managed_components/`, etc.
 - [ ] Añadir pruebas de la lógica pura (mapeo de pulsos, total, stock) con
