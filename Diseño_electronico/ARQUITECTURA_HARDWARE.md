@@ -192,8 +192,8 @@ graph LR
 | 12 V | Monedero CH-926 | 0.10 A | 0.20 A | Consumo en reposo y durante aceptación |
 | 12 V | Motor JGY370 (1 activo) | 0.40 A | 2.50 A | Corriente de arranque con carga mecánica |
 | 12 V | Bobina de relé 12 V (1 activa) | 0.04 A | 0.05 A | Relé tipo SRD-12VDC |
-| 12 V | Entrada del LM2596 | 0.45 A | 0.80 A | Equivalente de la carga de 5 V |
-| **12 V** | **Total del riel** | **≈ 1.0 A** | **≈ 3.6 A** | Fuente de 10 A: margen > 2.7× |
+| 12 V | Entrada del LM2596 | 0.20 A | 0.30 A | 5 V × 0.55 A ÷ 0.80 ÷ 12 V ≈ 0.29 A |
+| **12 V** | **Total del riel** | **≈ 0.75 A** | **≈ 3.1 A** | Fuente de 10 A: margen > 3.2× |
 | 5 V | Placa Hosyond | 0.35 A | 0.55 A | Lógica + retroiluminación |
 | **5 V** | **Total del riel** | **≈ 0.35 A** | **≈ 0.55 A** | LM2596 de 3 A: margen > 5× |
 | 3.3 V | ESP32-32E | 0.12 A | 0.24 A | Pico de radio deshabilitado |
