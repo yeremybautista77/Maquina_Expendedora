@@ -8,7 +8,28 @@ El funcionamiento es el siguiente:
 
 1. **Pago:** El usuario ingresa monedas a través de un **validador multimoneda** (Joyzan CH-926), que registra pulsos por valor (RD$ 1 = 1 pulso, RD$ 5 = 3 pulsos, RD$ 10 = 5 pulsos, RD$ 25 = 7 pulsos). Estos pulsos pasan por un **optoacoplador** de seguridad para llegar de forma aislada y limpia al ESP32.
 2. **Selección:** El usuario navega por la pantalla táctil (diseñada en una cuadrícula de 2 columnas por 3 filas) para elegir el producto y la cantidad (máximo 10 unidades por canal).
-3. **Despacho:** El ESP32 activa el relé correspondiente del motor reductore del canal seleccionado mediante el bus **I2C**. El motor avanza exactamente 360° (una revolución = 1 evento), detectado mediante el **final de carrera** (micro-switch) del propio motor. Si se compra más de un producto, el firmware aplica un **Mutex** en FreeRTOS para que solo un motor rote a la vez (despacho secuencial).
+3. **Despacho:** El ESP32 activa el relé correspondiente del motor reductor del canal seleccionado mediante el bus **I2C**. El motor avanza exactamente 360° (una revolución = 1 evento), detectado mediante el **final de carrera** (micro-switch) del propio motor. Si se compra más de un producto, el firmware aplica un **Mutex** en FreeRTOS para que solo un motor rote a la vez (despacho secuencial). El pedido se encola de forma **atómica**: se acepta completo o se rechaza entero.
+
+---
+
+## 📊 Estado del Proyecto
+
+**Fase P1 (Firmware v1.0) — completada en laboratorio.** El firmware compila sin errores ni warnings y queda a la espera de la validación en la placa real.
+
+**Implementado y verificado en compilación:**
+- GUI táctil 2×3 con imágenes desde MicroSD, modal de confirmación y panel de saldo.
+- Monedero multimoneda por ISR con ventana de ráfaga y antirrebote.
+- Despacho secuencial de 6 motores con Mutex y sensores de fin de carrera.
+- *Homing* automático al arrancar (10 s por canal) y encolado atómico todo-o-nada.
+- Cobro diferido: el saldo y el stock solo se descuentan cuando el motor confirma la unidad.
+- Persistencia en NVS de saldo, stock y precios.
+- Modo administración oculto para inventario, precios y prueba de motores.
+
+**Pendiente:**
+- Validación en hardware real: táctil/calibración, motores, persistencia NVS tras reinicio y modo administración.
+- Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
+
+**Build de referencia:** `maquina_expendedora.bin` = **611 856 B** (42 % de la partición de aplicación libre).
 
 ---
 
@@ -49,6 +70,21 @@ El funcionamiento es el siguiente:
 - **Módulo 2 (dirección 0x21):** Los pines P0–P5 se conectan a los pines de retorno de los micro-switches de los motores (sensores).
 
 *Nota de seguridad (contacto seco):* Para evitar que la corriente de 12V de los motores pase por el expansor de sensores (3.3V), se realizan cortes físicos en las pistas de cobre de las placas de los motores (LK20052) con un bisturí, aislando el micro-switch para que solo actúe conectando el pin `0x21` a tierra (GND).
+
+---
+
+## 🔐 Modo Administración (operador)
+
+El panel está oculto para el usuario final y se usa para mantenimiento de la máquina.
+
+1. **Acceso:** mantén pulsada la **esquina superior izquierda** de la pantalla durante **3 segundos**.
+2. Se abre un panel con scroll y tres secciones:
+   - **Inventario:** muestra el stock de los 6 canales y el botón `Rellenar Stock (Reset a 10)`.
+   - **Precios:** cada producto tiene `[-]`/`[+]` en pasos de **RD$ 5**. Pulsa `Guardar Precios` para aplicar los cambios y persistirlos en NVS. Rango válido: RD$ 5.00–1000.00.
+   - **Prueba de motores:** `Test M1`…`Test M6` despachan una unidad para comprobar el motor. La prueba **solo descuenta stock**; no cobra saldo ni altera el pedido del usuario.
+3. Cierra el panel con el botón **X**.
+
+**Seguridad:** el reset y las pruebas se bloquean mientras hay una compra activa o el motor/cola está ocupado. Los tests no modifican el saldo ni el flujo de venta.
 
 ---
 

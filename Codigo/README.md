@@ -4,6 +4,10 @@ Firmware en **C nativo** para una máquina expendedora de **6 canales** sobre un
 placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
+> **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
+> errores ni warnings (`maquina_expendedora.bin` = **611 856 B**, 42 % libre).
+> Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
+
 ## Requisitos
 
 - **ESP-IDF v5.2 o superior** (se usa el driver I2C moderno `i2c_master`).
