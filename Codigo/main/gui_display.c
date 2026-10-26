@@ -78,6 +78,16 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Altura de la fila de controles de cantidad. */
 #define GUI_CELL_CONTROLS_HEIGHT    34
 
+/**
+ * Ancho de cada celda como porcentaje del area util del contenedor.
+ * 48 % x 2 celdas + separacion = ~304 px de 312 px utiles: fuerza el salto de
+ * linea despues del segundo producto (grid 2x3 real con ROW_WRAP).
+ */
+#define GUI_CELL_WIDTH_PCT          48
+
+/** Altura fija de cada celda: 3 x 127 + 2 x 4 (gap) + 8 (padding) = 397 px. */
+#define GUI_CELL_HEIGHT             127
+
 /** Stock inicial de un producto cuando la NVS esta vacia. */
 #define GUI_DEFAULT_STOCK           10
 
@@ -610,8 +620,11 @@ static void create_cell(uint8_t index)
     const gui_product_t *product = &s_products[index];
 
     cell->cell = lv_obj_create(s_grid);
-    lv_obj_set_grid_cell(cell->cell, LV_GRID_ALIGN_STRETCH, index % 2, 1,
-                         LV_GRID_ALIGN_STRETCH, index / 2, 1);
+    /*
+     * Flex ROW_WRAP: el ancho del 48 % obliga a que solo entren dos celdas por
+     * fila, de modo que el sexto producto cierra el grid 2x3.
+     */
+    lv_obj_set_size(cell->cell, LV_PCT(GUI_CELL_WIDTH_PCT), GUI_CELL_HEIGHT);
     lv_obj_set_style_bg_color(cell->cell, lv_color_hex(0x1E2A38), 0);
     lv_obj_set_style_bg_opa(cell->cell, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(cell->cell, lv_color_hex(0x3A5068), 0);
@@ -830,8 +843,9 @@ static void build_ui(void)
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
     /*
-     * Area superior: grid ESTRICTO de 2 columnas x 3 filas que ocupa todo el
-     * espacio por encima del panel inferior (400 px = 83.3 % de la pantalla).
+     * Area superior: contenedor Flex con ROW_WRAP. No se usa LV_GRID porque el
+     * flex con ancho fijo por celda garantiza 2 columnas x 3 filas en 320x480.
+     * Ocupa todo el espacio por encima del panel inferior (400 px = 83.3 %).
      */
     s_grid = lv_obj_create(screen);
     lv_obj_set_size(s_grid, BOARD_TFT_H_RES,
@@ -844,16 +858,15 @@ static void build_ui(void)
     lv_obj_set_style_pad_row(s_grid, 4, 0);
     lv_obj_set_style_pad_column(s_grid, 4, 0);
     lv_obj_clear_flag(s_grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(s_grid, LV_LAYOUT_GRID);
 
-    /* Columnas y filas de igual tamano: celdas 154 x 128 px. */
-    static lv_coord_t column_dsc[] = {
-        LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
-    };
-    static lv_coord_t row_dsc[] = {
-        LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
-    };
-    lv_obj_set_grid_dsc_array(s_grid, column_dsc, row_dsc);
+    /*
+     * ROW_WRAP + ancho 48 % por celda = salto de linea automatico tras cada
+     * pareja de productos. Sin esto los 6 productos se agrupan en una fila.
+     */
+    lv_obj_set_layout(s_grid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(s_grid, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
 
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
         create_cell(i);

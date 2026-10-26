@@ -20,16 +20,17 @@
 - [x] Despacho I2C de 6 motores con Mutex (un motor a la vez) y sensores.
 - [x] Eventos de despacho (`UNIT_DONE` / `REQUEST_FAILED` / `IDLE`) y descarte
       de la cola ante fallo.
-- [x] GUI real: ST7796 320×480 por `esp_lcd`, XPT2046, LVGL 8.4, grid 2×3 con
-      BMP de la MicroSD, panel de saldo y modal `[Sí] [No]`.
+- [x] GUI real: ST7796 320×480 por `esp_lcd`, XPT2046, LVGL 8.4, layout Flex
+      2×3 (`ROW_WRAP`, celdas al 48 %) con BMP de la MicroSD, panel de saldo y
+      modal `[Sí] [No]`.
 - [x] Concurrencia: Mutex de estado y LVGL solo desde `task_gui`.
 - [x] Cobro diferido: confirmar solo encola; se cobra por unidad entregada.
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
 - [x] *Homing* secuencial de los 6 canales al arrancar (timeout 10 s).
 - [x] Persistencia en NVS de saldo y stock (carga al arrancar, guardado por moneda/unidad).
-- [x] GUI rediseñada: grid 2×3, cabecera nombre+precio, placeholder
+- [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
-- [x] Build limpio (590 256 B, 44 % libre) y `Codigo/` versionado.
+- [x] Build limpio (589 936 B, 44 % libre) y `Codigo/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -45,8 +46,8 @@
 
 ## 0. Preguntas para ti (responde debajo de cada una)
 
-> Estas son las dos decisiones que necesito de ti para cerrar esta sesión.
-> Puedes escribir la respuesta en la línea `Respuesta:` de cada pregunta.
+> Estas eran las dos decisiones pendientes de esta sesión. **Ambas respondidas**
+> (ver abajo); el push y el flasheo se ejecutan en esta misma sesión.
 
 ### Pregunta 1 — ¿Subo los commits a GitHub?
 
@@ -57,7 +58,7 @@ posteriores).
 - Opciones: **sí, haz push** / **no, déjalo local** / **espera**.
 - Si dices que sí, ejecuto `git push origin main` (no toco nada más).
 
-**Respuesta:**
+**Respuesta:** Sí, haz push. Asegura los commits locales en `origin/main`.
 
 ### Pregunta 2 — ¿Flasheamos ahora en la placa real?
 
@@ -67,7 +68,8 @@ Para probar homing, NVS y táctil necesito la placa conectada.
 - ¿Quieres **monitor serie** para ver los logs de arranque? (sí/no)
 - ¿O lo dejamos para después y seguimos solo con el código?
 
-**Respuesta:**
+**Respuesta:** Sí, flashea y activa el monitor serie usando el puerto **COM3**
+(o detéctalo automáticamente si COM3 falla).
 
 ---
 
@@ -85,15 +87,20 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 3. **NVS** (`nvs_flash`): namespace `vending`, claves `balance` (int64) y
    `stock` (blob de 6 B). Carga en `gui_display_init()`; guarda al acreditar
    monedas y en cada unidad cobrada.
-4. **GUI rediseñada**: grid estricto **2×3** (400 px), cabecera
+4. **GUI rediseñada**: layout Flex **2×3** con `LV_FLEX_FLOW_ROW_WRAP` y celdas
+   al **48 %** de ancho (fuerza el salto de línea tras cada pareja), cabecera
    `Producto N\nRD$ XX.00`, recuadro `[Espacio Imagen]`, `[-] Cant: N [+]`;
    panel inferior de **80 px** con `Saldo:`, `Monto a Pagar:` reactivo y
    `[ Confirmar ]` grande.
 5. **Precios**: tabla compilada `k_product_prices` = **RD$ 40/50/60/70/80/90**;
    eliminado `GUI_USE_DEMO_PRICES`.
-6. **Build**: `maquina_expendedora.bin` = **590 256 B** (`0x901b0`), **44 %
+6. **Build**: `maquina_expendedora.bin` = **589 936 B** (`0x90070`), **44 %
    libre**, sin warnings.
 7. **Docs**: README y este documento actualizados.
+8. **Corrección de layout (posterior a `3fbefa7`)**: el contenedor de productos
+   pasó de `LV_LAYOUT_GRID` a **Flex `ROW_WRAP`** con celdas al **48 %** de ancho
+   y **127 px** de alto, forzando el 2×3 real (antes los productos podían
+   colapsar en una sola fila). Build nuevo: **589 936 B** (`0x90070`).
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -264,7 +271,7 @@ cd Codigo
 
 ```
 Project build complete.
-maquina_expendedora.bin → 590 256 bytes (0x901b0)
+maquina_expendedora.bin → 589 936 bytes (0x90070)
 Partición app 0x100000 → 44 % libre
 Sin warnings del compilador en los archivos del proyecto.
 ```
@@ -406,7 +413,9 @@ Orden de arranque en `app_main()`:
   tabla compilada `k_product_prices`: **RD$ 40/50/60/70/80/90**
   (4000..9000 centavos). Ya no existe `GUI_USE_DEMO_PRICES`.
 - Layout:
-  - Grid estricto **2 columnas × 3 filas** en el 83 % superior (400 px).
+  - Layout Flex **2 columnas × 3 filas** con `LV_FLEX_FLOW_ROW_WRAP` en el 83 %
+    superior (400 px). Cada celda mide **48 %** del ancho útil (≈150 px) y
+    **127 px** de alto, lo que obliga a que solo entren dos celdas por fila.
   - Cada celda es un Flex en columna centrado: cabecera `Producto N\nRD$ XX.00`,
     recuadro gris de 52×52 con el BMP o `[Espacio Imagen]`, y fila Flex con
     `[-]`, `Cant: N` y `[+]` (botones de 34×34 px).
@@ -422,7 +431,7 @@ Orden de arranque en `app_main()`:
     no alcanza (muestra un toast).
 - `gui_display_init()`:
   - Inicializa SPI2, panel ST7796 (`esp_lcd`), retroiluminación LEDC y XPT2046.
-  - Registra display e input en LVGL, crea el grid 2×3 y el panel inferior.
+  - Registra display e input en LVGL, crea el layout 2×3 y el panel inferior.
   - Crea el Mutex de estado antes de cualquier acceso concurrente.
   - Carga saldo/stock desde NVS (`storage_load_locked()`).
 - Persistencia:
@@ -477,8 +486,8 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 - [x] **Integrar LVGL y el táctil**
   - LVGL 8.4.0 por Kconfig + XPT2046 en modo sondeo.
-  - Grid 2×3, botones `[-] [+]`, contador `Cant: N`, panel con saldo,
-    monto a pagar y modal `Confirmar compra [Sí] [No]`.
+  - Layout 2×3 con Flex `ROW_WRAP`, botones `[-] [+]`, contador `Cant: N`,
+    panel con saldo, monto a pagar y modal `Confirmar compra [Sí] [No]`.
   - `lv_timer_handler()` + `lv_tick_inc()` en `task_gui`.
   - *Criterio:* se puede seleccionar producto y confirmar solo con el dedo
     (pendiente de calibrar el táctil en la placa real).
@@ -651,25 +660,27 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 ### Checklist de puesta en marcha en la placa real
 
 1. **Flashear** con `.\compilar.ps1 -Flash -Port COMx -Monitor`.
-2. **Confirmar el log:** debe aparecer `ST7796 listo`, `Tactil XPT2046 listo` y
+2. **Layout:** confirmar visualmente 6 celdas en 2 columnas × 3 filas, sin
+   productos agrupados en una sola fila ni solapados con el panel inferior.
+3. **Confirmar el log:** debe aparecer `ST7796 listo`, `Tactil XPT2046 listo` y
    `MicroSD montada`. Si falta alguno, revisar pines/alimentación.
-3. **Colores y orientación:** si los colores salen invertidos, cambiar
+4. **Colores y orientación:** si los colores salen invertidos, cambiar
    `BOARD_TFT_INVERT_COLOR`; si rojo/azul están cambiados, cambiar
    `BOARD_TFT_USE_BGR_ORDER`; si la imagen está girada/espejada, ajustar
    `BOARD_TFT_SWAP_XY/MIRROR_X/MIRROR_Y`.
-4. **Táctil:** pulsar cada esquina. Si el eje X/Y está intercambiado o invertido,
+5. **Táctil:** pulsar cada esquina. Si el eje X/Y está intercambiado o invertido,
    ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`. Repetir hasta que el botón
    pulsado coincida con el dibujado.
-5. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
+6. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
    reiniciar. Sin archivos se muestra `[Espacio Imagen]`.
-6. **Homing:** reiniciar con un motor fuera de reposo y comprobar en el log que
+7. **Homing:** reiniciar con un motor fuera de reposo y comprobar en el log que
    el canal vuelve a LOW en menos de 10 s y que solo se energiza un relé a la vez.
-7. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
+8. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
    con el valor correcto.
-8. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
+9. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
    saldo baja **solo cuando el motor termina la vuelta**.
-9. **Persistencia:** apagar y encender; el saldo y el stock deben conservarse.
-10. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
+10. **Persistencia:** apagar y encender; el saldo y el stock deben conservarse.
+11. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
     que el pedido se cancela sin cobrar las unidades no entregadas.
 
 ---
