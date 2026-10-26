@@ -72,6 +72,12 @@ extern "C" {
 typedef struct {
     uint8_t channel;    /**< Indice 0..5 (Producto 1..6). */
     uint8_t quantity;   /**< Unidades a despachar (1..stock). */
+    /**
+     * true si la solicitud viene del modo administracion (prueba de motor).
+     * En ese caso la GUI NO cobra saldo: solo descuenta el stock de la unidad
+     * que fisicamente cae.
+     */
+    bool admin_test;
 } motor_request_t;
 
 /**
@@ -104,6 +110,11 @@ typedef struct {
     uint8_t channel;            /**< Canal 0..5 (solo UNIT_DONE / FAILED). */
     uint8_t units;              /**< Unidades entregadas o no entregadas. */
     esp_err_t error;            /**< Codigo de error (solo FAILED). */
+    /**
+     * true si la solicitud origen era una prueba de administrador. La GUI usa
+     * este campo para no tocar el saldo ni el pedido de compra.
+     */
+    bool admin_test;
 } motor_event_t;
 
 /**

@@ -87,11 +87,12 @@ static void on_motor_event(const motor_event_t *event, void *ctx)
 
     switch (event->type) {
     case MOTOR_EVENT_UNIT_DONE:
-        gui_display_on_unit_dispatched(event->channel);
+        gui_display_on_unit_dispatched(event->channel, event->admin_test);
         break;
 
     case MOTOR_EVENT_REQUEST_FAILED:
-        gui_display_on_dispatch_failed(event->channel, event->error);
+        gui_display_on_dispatch_failed(event->channel, event->error,
+                                       event->admin_test);
         break;
 
     case MOTOR_EVENT_IDLE:

@@ -118,11 +118,12 @@ esp_err_t gui_display_mount_sd(void);
 esp_err_t gui_display_unmount_sd(void);
 
 /**
- * @brief Carga saldo y stock de los 6 productos desde la NVS.
+ * @brief Carga saldo, stock y precios de los 6 productos desde la NVS.
  *
- * Los precios NO se persisten: siempre se toman de la tabla compilada
- * (RD$ 40..90). Si la NVS esta vacia o no esta inicializada se aplican los
- * valores por defecto (saldo 0 y 10 unidades por producto).
+ * Los precios son estado mutable persistido en la NVS (clave `prices`). Si la
+ * clave no existe o el blob es invalido se aplican los valores por defecto
+ * (RD$ 40, 50, 60, 70, 80 y 90). Si la NVS esta vacia tambien se aplican saldo
+ * 0 y 10 unidades por producto.
  *
  * gui_display_init() la invoca automaticamente. Es seguro llamarla de nuevo
  * desde cualquier tarea: solo toca estado protegido y despierta a task_gui.
@@ -132,10 +133,11 @@ esp_err_t gui_display_unmount_sd(void);
 esp_err_t gui_display_load_state(void);
 
 /**
- * @brief Guarda saldo y stock actuales en la NVS.
+ * @brief Guarda saldo, stock y precios actuales en la NVS.
  *
- * Se llama internamente al acreditar monedas y al cobrar cada unidad
- * despachada. Es seguro desde cualquier tarea (nunca desde una ISR).
+ * Se llama internamente al acreditar monedas, al cobrar cada unidad despachada
+ * y al guardar los precios desde el modo administracion. Es seguro desde
+ * cualquier tarea (nunca desde una ISR).
  *
  * @return ESP_OK o el error de NVS.
  */
@@ -190,7 +192,13 @@ uint8_t gui_display_get_quantity(uint8_t index);
 esp_err_t gui_display_set_product_stock(uint8_t index, uint8_t stock);
 
 /**
- * @brief Actualiza el precio unitario de un producto (en centavos).
+ * @brief Actualiza el precio unitario de un producto (en centavos) y lo guarda.
+ *
+ * El precio se recorta al rango [GUI_PRICE_MIN_CENTS, GUI_PRICE_MAX_CENTS].
+ *
+ * @param index       Producto 0..5.
+ * @param price_cents Nuevo precio en centavos.
+ * @return ESP_OK, ESP_ERR_INVALID_ARG o error de NVS.
  */
 esp_err_t gui_display_set_product_price(uint8_t index, uint32_t price_cents);
 
@@ -256,23 +264,29 @@ esp_err_t gui_display_confirm_purchase(void);
 /**
  * @brief Callback de unidad despachada con exito (desde motor_task).
  *
- * Resta el precio al saldo y reduce el stock en 1. Es el UNICO punto donde se
- * descuentan saldo y stock por una compra.
+ * En una venta real resta el precio al saldo y reduce el stock en 1; es el
+ * UNICO punto donde se descuentan saldo y stock por una compra.
  *
- * @param channel Canal 0..5 que entrego una unidad.
+ * En una prueba del modo administracion (`admin_test = true`) NO toca el saldo
+ * ni el pedido: solo reduce el stock en 1, porque el producto cae fisicamente.
+ *
+ * @param channel    Canal 0..5 que entrego una unidad.
+ * @param admin_test true si la solicitud era una prueba de administrador.
  */
-void gui_display_on_unit_dispatched(uint8_t channel);
+void gui_display_on_unit_dispatched(uint8_t channel, bool admin_test);
 
 /**
  * @brief Callback de fallo de despacho (desde motor_task).
  *
- * Cancela las unidades no entregadas del pedido: no se cobran ni reducen stock.
- * Las unidades ya entregadas si quedaron cobradas.
+ * En una venta real cancela las unidades no entregadas del pedido: no se cobran
+ * ni reducen stock. Las unidades ya entregadas si quedaron cobradas.
  *
- * @param channel Canal que fallo.
- * @param error   Codigo de error reportado por el motor.
+ * @param channel    Canal que fallo.
+ * @param error      Codigo de error reportado por el motor.
+ * @param admin_test true si la solicitud era una prueba de administrador.
  */
-void gui_display_on_dispatch_failed(uint8_t channel, esp_err_t error);
+void gui_display_on_dispatch_failed(uint8_t channel, esp_err_t error,
+                                    bool admin_test);
 
 /**
  * @brief Callback de cola vacia / fin de pedido (desde motor_task).

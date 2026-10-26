@@ -120,21 +120,28 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Clave del stock (blob de GUI_PRODUCT_COUNT bytes). */
 #define GUI_NVS_KEY_STOCK           "stock"
 
+/** Clave de los precios (blob de GUI_PRODUCT_COUNT uint32_t = 24 B). */
+#define GUI_NVS_KEY_PRICES          "prices"
+
+/* --- Precios -------------------------------------------------------------- */
+
+/** Paso de ajuste de precio desde el modo administracion (RD$ 5). */
+#define GUI_PRICE_STEP_CENTS        500
+
+/** Precio minimo permitido (RD$ 5.00). */
+#define GUI_PRICE_MIN_CENTS         500
+
+/** Precio maximo permitido (RD$ 1000.00). */
+#define GUI_PRICE_MAX_CENTS         100000
+
 /* --- Modelo de productos -------------------------------------------------- */
 
-/**
- * Precios base en centavos (RD$ 40, 50, 60, 70, 80 y 90).
- * Es la unica fuente de verdad del precio: no se persiste en NVS para que un
- * cambio de firmware actualice la tabla sin arrastrar valores viejos.
+/*
+ * Los precios ya NO son una tabla constante: viven en s_products[i].price_cents
+ * (estado global protegido por s_state_mutex) y se persisten en la NVS con la
+ * clave "prices". Los valores por defecto solo se aplican al cargar si la clave
+ * no existe o el blob es invalido.
  */
-static const uint32_t k_product_prices[GUI_PRODUCT_COUNT] = {
-    4000,   /* Producto 1: RD$ 40.00 */
-    5000,   /* Producto 2: RD$ 50.00 */
-    6000,   /* Producto 3: RD$ 60.00 */
-    7000,   /* Producto 4: RD$ 70.00 */
-    8000,   /* Producto 5: RD$ 80.00 */
-    9000,   /* Producto 6: RD$ 90.00 */
-};
 
 static gui_product_t s_products[GUI_PRODUCT_COUNT] = {
     { .name = "Producto 1", .image_path = "/sdcard/productos/p1.bmp",
@@ -272,6 +279,17 @@ static lv_obj_t *s_admin_hotspot = NULL;
 static lv_obj_t *s_admin_overlay = NULL;
 static bool s_admin_open = false;
 
+/*
+ * Widgets y borrador de precios del panel de administracion. El borrador se
+ * aplica al estado global y a la NVS solo cuando el operador pulsa
+ * "Guardar Precios".
+ */
+static lv_obj_t *s_admin_stock_label = NULL;
+static lv_obj_t *s_admin_status_label = NULL;
+static lv_obj_t *s_admin_price_labels[GUI_PRODUCT_COUNT];
+static lv_obj_t *s_admin_test_btns[GUI_PRODUCT_COUNT];
+static uint32_t s_admin_price_draft[GUI_PRODUCT_COUNT];
+
 /* --- Estado de la MicroSD ------------------------------------------------- */
 
 static sdmmc_card_t *s_sd_card = NULL;
@@ -350,19 +368,29 @@ static void order_finalize_locked(void)
  * ========================================================================== */
 
 /**
- * @brief Carga saldo y stock desde NVS.
+ * @brief Carga saldo, stock y precios desde NVS.
  *
  * Debe llamarse con el Mutex de estado tomado (o antes de crear task_gui).
- * Los precios SIEMPRE se toman de k_product_prices (tabla compilada); la NVS
- * solo conserva lo que cambia en operacion: saldo y existencias.
+ * Los precios viven en s_products[i].price_cents y se persisten en la clave
+ * "prices"; si no existe o es invalida se usan los valores por defecto.
  *
  * Si la NVS esta vacia, no esta inicializada o el blob es invalido, se aplican
- * los valores por defecto (saldo 0 y GUI_DEFAULT_STOCK por producto).
+ * los valores por defecto (saldo 0, 10 unidades y RD$ 40..90 por producto).
  */
 static void storage_load_locked(void)
 {
+    /* Valores de fabrica; solo se usan si la NVS no tiene precios validos. */
+    static const uint32_t default_prices[GUI_PRODUCT_COUNT] = {
+        4000,   /* Producto 1: RD$ 40.00 */
+        5000,   /* Producto 2: RD$ 50.00 */
+        6000,   /* Producto 3: RD$ 60.00 */
+        7000,   /* Producto 4: RD$ 70.00 */
+        8000,   /* Producto 5: RD$ 80.00 */
+        9000,   /* Producto 6: RD$ 90.00 */
+    };
+
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-        s_products[i].price_cents = k_product_prices[i];
+        s_products[i].price_cents = default_prices[i];
         s_products[i].stock = GUI_DEFAULT_STOCK;
         s_products[i].quantity = 0;
     }
@@ -371,7 +399,7 @@ static void storage_load_locked(void)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(GUI_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI(TAG, "NVS vacia: saldo RD$ 0.00 y stock inicial %u por producto",
+        ESP_LOGI(TAG, "NVS vacia: saldo RD$ 0.00, stock %u y precios por defecto",
                  (unsigned)GUI_DEFAULT_STOCK);
         return;
     }
@@ -396,6 +424,18 @@ static void storage_load_locked(void)
         }
     }
 
+    uint32_t prices[GUI_PRODUCT_COUNT];
+    length = sizeof(prices);
+    if (nvs_get_blob(handle, GUI_NVS_KEY_PRICES, prices, &length) == ESP_OK &&
+        length == sizeof(prices)) {
+        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+            if (prices[i] >= GUI_PRICE_MIN_CENTS &&
+                prices[i] <= GUI_PRICE_MAX_CENTS) {
+                s_products[i].price_cents = prices[i];
+            }
+        }
+    }
+
     nvs_close(handle);
 
     ESP_LOGI(TAG,
@@ -405,14 +445,28 @@ static void storage_load_locked(void)
              (unsigned)s_products[0].stock, (unsigned)s_products[1].stock,
              (unsigned)s_products[2].stock, (unsigned)s_products[3].stock,
              (unsigned)s_products[4].stock, (unsigned)s_products[5].stock);
+    ESP_LOGI(TAG,
+             "Precios: RD$ %u.%02u / %u.%02u / %u.%02u / %u.%02u / %u.%02u / %u.%02u",
+             (unsigned)(s_products[0].price_cents / 100),
+             (unsigned)(s_products[0].price_cents % 100),
+             (unsigned)(s_products[1].price_cents / 100),
+             (unsigned)(s_products[1].price_cents % 100),
+             (unsigned)(s_products[2].price_cents / 100),
+             (unsigned)(s_products[2].price_cents % 100),
+             (unsigned)(s_products[3].price_cents / 100),
+             (unsigned)(s_products[3].price_cents % 100),
+             (unsigned)(s_products[4].price_cents / 100),
+             (unsigned)(s_products[4].price_cents % 100),
+             (unsigned)(s_products[5].price_cents / 100),
+             (unsigned)(s_products[5].price_cents % 100));
 }
 
 /**
- * @brief Guarda saldo y stock en NVS.
+ * @brief Guarda saldo, stock y precios en NVS.
  *
  * Debe llamarse con el Mutex de estado tomado para obtener una instantanea
- * coherente. La escritura real la hace la tarea que invoca (monedero o
- * task_despacho), nunca una ISR.
+ * coherente. La escritura real la hace la tarea que invoca (monedero,
+ * task_despacho o task_gui), nunca una ISR.
  */
 static esp_err_t storage_save_locked(void)
 {
@@ -425,13 +479,18 @@ static esp_err_t storage_save_locked(void)
     }
 
     uint8_t stock[GUI_PRODUCT_COUNT];
+    uint32_t prices[GUI_PRODUCT_COUNT];
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
         stock[i] = s_products[i].stock;
+        prices[i] = s_products[i].price_cents;
     }
 
     err = nvs_set_i64(handle, GUI_NVS_KEY_BALANCE, s_balance_cents);
     if (err == ESP_OK) {
         err = nvs_set_blob(handle, GUI_NVS_KEY_STOCK, stock, sizeof(stock));
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, GUI_NVS_KEY_PRICES, prices, sizeof(prices));
     }
     if (err == ESP_OK) {
         err = nvs_commit(handle);
@@ -440,7 +499,7 @@ static esp_err_t storage_save_locked(void)
     nvs_close(handle);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo guardar saldo/stock en NVS: %s",
+        ESP_LOGE(TAG, "No se pudo guardar saldo/stock/precios en NVS: %s",
                  esp_err_to_name(err));
     }
     return err;
@@ -867,6 +926,69 @@ static void destroy_admin_overlay(void)
         s_admin_overlay = NULL;
     }
     s_admin_open = false;
+
+    /* Los widgets ya no existen: invalidar las referencias colgantes. */
+    s_admin_stock_label = NULL;
+    s_admin_status_label = NULL;
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        s_admin_price_labels[i] = NULL;
+        s_admin_test_btns[i] = NULL;
+    }
+}
+
+/** Actualiza la linea de estado fija del panel de administracion. */
+static void admin_set_status(const char *message)
+{
+    if (s_admin_status_label != NULL && message != NULL) {
+        lv_label_set_text(s_admin_status_label, message);
+    }
+}
+
+/** Crea una seccion con titulo dentro del panel de administracion. */
+static lv_obj_t *create_admin_section(lv_obj_t *parent, const char *title)
+{
+    lv_obj_t *section = lv_obj_create(parent);
+    lv_obj_set_width(section, LV_PCT(100));
+    lv_obj_set_height(section, LV_SIZE_CONTENT);
+    lv_obj_set_layout(section, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(section, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(section, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_all(section, 8, 0);
+    lv_obj_set_style_pad_row(section, 8, 0);
+    lv_obj_set_style_bg_color(section, lv_color_hex(0x263445), 0);
+    lv_obj_set_style_bg_opa(section, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(section, 0, 0);
+    lv_obj_set_style_radius(section, 8, 0);
+    lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *label = lv_label_create(section);
+    lv_label_set_text(label, title);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xF1C40F), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+
+    return section;
+}
+
+/** Crea un boton con etiqueta centrada y callback de clic. */
+static lv_obj_t *create_admin_button(lv_obj_t *parent, const char *text,
+                                     lv_coord_t width, lv_coord_t height,
+                                     uint32_t color, const lv_font_t *font,
+                                     lv_event_cb_t callback, void *user_data)
+{
+    lv_obj_t *button = lv_btn_create(parent);
+    lv_obj_set_size(button, width, height);
+    lv_obj_set_style_radius(button, 6, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
+    lv_obj_set_style_pad_all(button, 0, 0);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, user_data);
+
+    lv_obj_t *label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_center(label);
+
+    return button;
 }
 
 static void on_admin_close_clicked(lv_event_t *event)
@@ -875,6 +997,13 @@ static void on_admin_close_clicked(lv_event_t *event)
         return;
     }
     destroy_admin_overlay();
+
+    /* Rearma el grid: sin este aviso los botones quedan deshabilitados. */
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        s_ui_dirty = true;
+        state_unlock();
+    }
+    ui_notify();
 }
 
 static void on_admin_reset_stock_clicked(lv_event_t *event)
@@ -883,9 +1012,14 @@ static void on_admin_reset_stock_clicked(lv_event_t *event)
         return;
     }
 
+    if (motor_control_is_busy()) {
+        admin_set_status("Espere a que termine el despacho");
+        return;
+    }
+
     bool reset_done = false;
     if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
-        if (s_order.active) {
+        if (s_order.active || s_modal_open) {
             set_toast_locked("Espere a que termine el despacho");
             s_ui_dirty = true;
         } else {
@@ -905,11 +1039,163 @@ static void on_admin_reset_stock_clicked(lv_event_t *event)
     }
 
     if (reset_done) {
+        admin_set_status("Stock restablecido a 10 unidades");
         ESP_LOGI(TAG, "Modo administracion: stock restablecido a %u por producto",
                  (unsigned)GUI_DEFAULT_STOCK);
-        destroy_admin_overlay();
+    } else {
+        admin_set_status("Espere a que termine el despacho");
     }
     ui_notify();
+}
+
+static void on_admin_price_step_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    /*
+     * user_data codifica el producto y la direccion:
+     *   bit 0 = 1 suma, 0 resta; bits 1..3 = indice 0..5.
+     */
+    const uint32_t code = (uint32_t)(uintptr_t)lv_event_get_user_data(event);
+    const uint8_t index = (uint8_t)(code >> 1);
+    const bool is_plus = (code & 1U) != 0;
+    if (index >= GUI_PRODUCT_COUNT) {
+        return;
+    }
+
+    int32_t price = (int32_t)s_admin_price_draft[index];
+    price += is_plus ? GUI_PRICE_STEP_CENTS : -GUI_PRICE_STEP_CENTS;
+    if (price < GUI_PRICE_MIN_CENTS) {
+        price = GUI_PRICE_MIN_CENTS;
+    }
+    if (price > GUI_PRICE_MAX_CENTS) {
+        price = GUI_PRICE_MAX_CENTS;
+    }
+    s_admin_price_draft[index] = (uint32_t)price;
+
+    if (s_admin_price_labels[index] != NULL) {
+        lv_label_set_text_fmt(s_admin_price_labels[index], "RD$ %u.%02u",
+                              (unsigned)(s_admin_price_draft[index] / 100),
+                              (unsigned)(s_admin_price_draft[index] % 100));
+    }
+    admin_set_status("Cambios de precio sin guardar");
+}
+
+static void on_admin_save_prices_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    const char *status = "No se pudieron guardar los precios";
+    bool applied = false;
+    esp_err_t save_err = ESP_FAIL;
+
+    if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        admin_set_status("Estado ocupado: intente de nuevo");
+        return;
+    }
+
+    if (s_order.active || s_modal_open) {
+        set_toast_locked("Espere a que termine el despacho");
+        s_ui_dirty = true;
+        status = "Espere a que termine el despacho";
+    } else {
+        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+            uint32_t price = s_admin_price_draft[i];
+            if (price < GUI_PRICE_MIN_CENTS) {
+                price = GUI_PRICE_MIN_CENTS;
+            }
+            if (price > GUI_PRICE_MAX_CENTS) {
+                price = GUI_PRICE_MAX_CENTS;
+            }
+            s_admin_price_draft[i] = price;
+            s_products[i].price_cents = price;
+        }
+        save_err = storage_save_locked();
+        set_toast_locked(save_err == ESP_OK
+                             ? "Precios guardados"
+                             : "Precios aplicados; fallo al guardar NVS");
+        s_ui_dirty = true;
+        applied = true;
+        status = (save_err == ESP_OK)
+                     ? "Precios guardados en NVS"
+                     : "Precios aplicados; fallo al guardar NVS";
+    }
+
+    state_unlock();
+
+    admin_set_status(status);
+    if (applied) {
+        ESP_LOGI(TAG, "Modo administracion: precios actualizados (%s)",
+                 esp_err_to_name(save_err));
+    }
+    ui_notify();
+}
+
+static void on_admin_test_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    const uint8_t channel =
+        (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    if (channel >= GUI_PRODUCT_COUNT) {
+        return;
+    }
+
+    /*
+     * Un test no puede convivir con un pedido real ni con otro test: la cola y
+     * la fuente de 12 V son recursos unicos. Se rechaza antes de encolar.
+     */
+    if (motor_control_is_busy()) {
+        admin_set_status("Espere a que termine el despacho");
+        return;
+    }
+
+    bool allowed = false;
+    const char *reason = "Prueba no disponible";
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        if (s_order.active || s_modal_open) {
+            reason = "Espere a que termine el despacho";
+        } else if (s_products[channel].stock == 0) {
+            reason = "Producto agotado: no se puede probar";
+        } else {
+            allowed = true;
+        }
+        state_unlock();
+    } else {
+        reason = "Estado ocupado: intente de nuevo";
+    }
+
+    if (!allowed) {
+        admin_set_status(reason);
+        return;
+    }
+
+    const motor_request_t request = {
+        .channel = channel,
+        .quantity = 1,
+        .admin_test = true,
+    };
+    const esp_err_t err = motor_control_enqueue_batch(&request, 1);
+
+    char status[GUI_TOAST_MAX_LEN];
+    if (err == ESP_OK) {
+        snprintf(status, sizeof(status), "Prueba M%u encolada",
+                 (unsigned)(channel + 1));
+        ESP_LOGI(TAG, "Modo administracion: prueba del motor %u encolada",
+                 (unsigned)(channel + 1));
+    } else {
+        snprintf(status, sizeof(status), "No se pudo encolar la prueba M%u",
+                 (unsigned)(channel + 1));
+        ESP_LOGW(TAG, "Modo administracion: fallo al encolar prueba M%u: %s",
+                 (unsigned)(channel + 1), esp_err_to_name(err));
+    }
+    admin_set_status(status);
 }
 
 static void build_admin_overlay(void)
@@ -919,12 +1205,15 @@ static void build_admin_overlay(void)
     }
 
     uint8_t stock[GUI_PRODUCT_COUNT] = {0};
-    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
-        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-            stock[i] = s_products[i].stock;
-        }
-        state_unlock();
+    if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        ESP_LOGW(TAG, "Modo administracion: no se pudo leer el estado");
+        return;
     }
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        stock[i] = s_products[i].stock;
+        s_admin_price_draft[i] = s_products[i].price_cents;
+    }
+    state_unlock();
 
     s_admin_overlay = lv_obj_create(lv_scr_act());
     lv_obj_set_size(s_admin_overlay, BOARD_TFT_H_RES, BOARD_TFT_V_RES);
@@ -939,64 +1228,166 @@ static void build_admin_overlay(void)
     s_admin_open = true;
 
     lv_obj_t *card = lv_obj_create(s_admin_overlay);
-    lv_obj_set_size(card, 290, 290);
+    lv_obj_set_size(card, 306, 464);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1E2A38), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(card, lv_color_hex(0x3A5068), 0);
     lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_radius(card, 10, 0);
-    lv_obj_set_style_pad_all(card, 12, 0);
+    lv_obj_set_style_pad_all(card, 8, 0);
+    lv_obj_set_style_pad_row(card, 6, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(card, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-    lv_obj_t *title = lv_label_create(card);
+    /* Cabecera fija: titulo + cierre. */
+    lv_obj_t *header = lv_obj_create(card);
+    lv_obj_set_width(header, LV_PCT(100));
+    lv_obj_set_height(header, 32);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(header, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *title = lv_label_create(header);
     lv_label_set_text(title, "Modo Administracion");
     lv_obj_set_style_text_color(title, lv_color_hex(0xECF0F1), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
-    lv_obj_t *stock_label = lv_label_create(card);
-    lv_label_set_text_fmt(stock_label,
-                          "Stock actual:\n%u / %u / %u\n%u / %u / %u",
+    (void)create_admin_button(header, "X", 36, 30, 0x7F8C8D,
+                              &lv_font_montserrat_16,
+                              on_admin_close_clicked, NULL);
+
+    /* Linea de estado fija (feedback de guardado y pruebas). */
+    s_admin_status_label = lv_label_create(card);
+    lv_label_set_text(s_admin_status_label, "Ajustes del operador");
+    lv_obj_set_width(s_admin_status_label, LV_PCT(100));
+    lv_label_set_long_mode(s_admin_status_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(s_admin_status_label, lv_color_hex(0x95A5A6), 0);
+    lv_obj_set_style_text_font(s_admin_status_label, &lv_font_montserrat_12, 0);
+
+    /* Contenedor con scroll vertical para las tres secciones. */
+    lv_obj_t *content = lv_obj_create(card);
+    lv_obj_set_width(content, LV_PCT(100));
+    lv_obj_set_flex_grow(content, 1);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, 2, 0);
+    lv_obj_set_style_pad_row(content, 10, 0);
+    lv_obj_set_layout(content, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+
+    /* --- Seccion 1: inventario ------------------------------------------- */
+    lv_obj_t *inventory = create_admin_section(content, "Inventario");
+
+    s_admin_stock_label = lv_label_create(inventory);
+    lv_label_set_text_fmt(s_admin_stock_label,
+                          "Stock: %u / %u / %u\n       %u / %u / %u",
                           (unsigned)stock[0], (unsigned)stock[1],
                           (unsigned)stock[2], (unsigned)stock[3],
                           (unsigned)stock[4], (unsigned)stock[5]);
-    lv_obj_set_style_text_align(stock_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(stock_label, lv_color_hex(0xD5DBDB), 0);
-    lv_obj_set_style_text_font(stock_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(stock_label, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_set_style_text_color(s_admin_stock_label, lv_color_hex(0xD5DBDB), 0);
+    lv_obj_set_style_text_font(s_admin_stock_label, &lv_font_montserrat_14, 0);
 
-    lv_obj_t *hint = lv_label_create(card);
-    lv_label_set_text(hint, "Reinicia las existencias de los 6 productos.");
-    lv_obj_set_width(hint, 250);
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    (void)create_admin_button(inventory, "Rellenar Stock (Reset a 10)",
+                              LV_PCT(100), 42, 0x27AE60,
+                              &lv_font_montserrat_14,
+                              on_admin_reset_stock_clicked, NULL);
+
+    /* --- Seccion 2: precios ---------------------------------------------- */
+    lv_obj_t *prices = create_admin_section(content, "Precios (RD$)");
+
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        lv_obj_t *row = lv_obj_create(prices);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 34);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_style_pad_column(row, 4, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t *name = lv_label_create(row);
+        lv_label_set_text(name, s_products[i].name);
+        lv_obj_set_width(name, 74);
+        lv_obj_set_style_text_color(name, lv_color_hex(0xECF0F1), 0);
+        lv_obj_set_style_text_font(name, &lv_font_montserrat_12, 0);
+
+        s_admin_price_labels[i] = lv_label_create(row);
+        lv_label_set_text_fmt(s_admin_price_labels[i], "RD$ %u.%02u",
+                              (unsigned)(s_admin_price_draft[i] / 100),
+                              (unsigned)(s_admin_price_draft[i] % 100));
+        lv_obj_set_width(s_admin_price_labels[i], 72);
+        lv_obj_set_style_text_align(s_admin_price_labels[i],
+                                    LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(s_admin_price_labels[i],
+                                    lv_color_hex(0xF1C40F), 0);
+        lv_obj_set_style_text_font(s_admin_price_labels[i],
+                                   &lv_font_montserrat_14, 0);
+
+        (void)create_admin_button(
+            row, "-", 34, 30, 0xC0392B, &lv_font_montserrat_16,
+            on_admin_price_step_clicked,
+            (void *)(uintptr_t)(((uint32_t)i << 1) | 0U));
+        (void)create_admin_button(
+            row, "+", 34, 30, 0x27AE60, &lv_font_montserrat_16,
+            on_admin_price_step_clicked,
+            (void *)(uintptr_t)(((uint32_t)i << 1) | 1U));
+    }
+
+    (void)create_admin_button(prices, "Guardar Precios", LV_PCT(100), 40,
+                              0x2980B9, &lv_font_montserrat_14,
+                              on_admin_save_prices_clicked, NULL);
+
+    /* --- Seccion 3: prueba de motores ------------------------------------ */
+    lv_obj_t *tests = create_admin_section(content, "Prueba de Motores");
+
+    lv_obj_t *test_grid = lv_obj_create(tests);
+    lv_obj_set_width(test_grid, LV_PCT(100));
+    lv_obj_set_height(test_grid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(test_grid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(test_grid, 0, 0);
+    lv_obj_set_style_pad_all(test_grid, 0, 0);
+    lv_obj_set_style_pad_row(test_grid, 6, 0);
+    lv_obj_set_style_pad_column(test_grid, 6, 0);
+    lv_obj_clear_flag(test_grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(test_grid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(test_grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(test_grid, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        char text[16];
+        snprintf(text, sizeof(text), "Test M%u", (unsigned)(i + 1));
+        s_admin_test_btns[i] =
+            create_admin_button(test_grid, text, 78, 38, 0x8E44AD,
+                                &lv_font_montserrat_12,
+                                on_admin_test_clicked,
+                                (void *)(uintptr_t)i);
+    }
+
+    lv_obj_t *hint = lv_label_create(tests);
+    lv_label_set_text(hint, "Solo descuenta stock; no toca el saldo.");
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x95A5A6), 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 104);
-
-    lv_obj_t *reset_btn = lv_btn_create(card);
-    lv_obj_set_size(reset_btn, 250, 46);
-    lv_obj_set_style_radius(reset_btn, 8, 0);
-    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0x27AE60), 0);
-    lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_MID, 0, -52);
-    lv_obj_add_event_cb(reset_btn, on_admin_reset_stock_clicked,
-                        LV_EVENT_CLICKED, NULL);
-    lv_obj_t *reset_label = lv_label_create(reset_btn);
-    lv_label_set_text(reset_label, "Rellenar Stock (Reset a 10)");
-    lv_obj_set_style_text_font(reset_label, &lv_font_montserrat_14, 0);
-    lv_obj_center(reset_label);
-
-    lv_obj_t *close_btn = lv_btn_create(card);
-    lv_obj_set_size(close_btn, 250, 40);
-    lv_obj_set_style_radius(close_btn, 8, 0);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x7F8C8D), 0);
-    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(close_btn, on_admin_close_clicked,
-                        LV_EVENT_CLICKED, NULL);
-    lv_obj_t *close_label = lv_label_create(close_btn);
-    lv_label_set_text(close_label, "Cerrar");
-    lv_obj_set_style_text_font(close_label, &lv_font_montserrat_14, 0);
-    lv_obj_center(close_label);
 }
 
 static void on_admin_hotspot_long_pressed(lv_event_t *event)
@@ -1293,6 +1684,37 @@ static void gui_refresh_ui(void)
         lv_obj_clear_state(s_confirm_btn, LV_STATE_DISABLED);
     } else {
         lv_obj_add_state(s_confirm_btn, LV_STATE_DISABLED);
+    }
+
+    /*
+     * Panel de administracion abierto: refrescar stock y habilitar/deshabilitar
+     * los tests segun el estado real. El overlay vive en la misma tarea, asi
+     * que tocar sus widgets aqui es seguro.
+     */
+    if (s_admin_overlay != NULL) {
+        if (s_admin_stock_label != NULL) {
+            lv_label_set_text_fmt(s_admin_stock_label,
+                                  "Stock: %u / %u / %u\n       %u / %u / %u",
+                                  (unsigned)snapshot.products[0].stock,
+                                  (unsigned)snapshot.products[1].stock,
+                                  (unsigned)snapshot.products[2].stock,
+                                  (unsigned)snapshot.products[3].stock,
+                                  (unsigned)snapshot.products[4].stock,
+                                  (unsigned)snapshot.products[5].stock);
+        }
+        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+            if (s_admin_test_btns[i] == NULL) {
+                continue;
+            }
+            if (snapshot.order_active || snapshot.products[i].stock == 0) {
+                lv_obj_add_state(s_admin_test_btns[i], LV_STATE_DISABLED);
+            } else {
+                lv_obj_clear_state(s_admin_test_btns[i], LV_STATE_DISABLED);
+            }
+        }
+        if (snapshot.toast_pending && s_admin_status_label != NULL) {
+            lv_label_set_text(s_admin_status_label, snapshot.toast);
+        }
     }
 
     if (snapshot.modal_open && s_modal_overlay == NULL) {
@@ -1871,16 +2293,23 @@ esp_err_t gui_display_set_product_price(uint8_t index, uint32_t price_cents)
     if (index >= GUI_PRODUCT_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (price_cents < GUI_PRICE_MIN_CENTS) {
+        price_cents = GUI_PRICE_MIN_CENTS;
+    }
+    if (price_cents > GUI_PRICE_MAX_CENTS) {
+        price_cents = GUI_PRICE_MAX_CENTS;
+    }
     if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
         return ESP_ERR_TIMEOUT;
     }
 
     s_products[index].price_cents = price_cents;
     s_ui_dirty = true;
+    const esp_err_t err = storage_save_locked();
 
     state_unlock();
     ui_notify();
-    return ESP_OK;
+    return err;
 }
 
 const gui_product_t *gui_display_get_product(uint8_t index)
@@ -2176,13 +2605,43 @@ esp_err_t gui_display_confirm_purchase(void)
  *  Callbacks de motor_task (cobro por unidad entregada)
  * ========================================================================== */
 
-void gui_display_on_unit_dispatched(uint8_t channel)
+void gui_display_on_unit_dispatched(uint8_t channel, bool admin_test)
 {
     if (channel >= GUI_PRODUCT_COUNT) {
         return;
     }
     if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
         ESP_LOGE(TAG, "No se pudo bloquear el estado al cobrar la unidad");
+        return;
+    }
+
+    /*
+     * PRUEBA DE ADMINISTRADOR: el motor giro por un boton "Test Mx". El
+     * producto cae fisicamente, asi que se descuenta stock, pero NO se toca el
+     * saldo, el pedido ni el flujo de compra.
+     */
+    if (admin_test) {
+        if (s_products[channel].stock > 0) {
+            s_products[channel].stock--;
+        }
+        (void)storage_save_locked();
+
+        char message[GUI_TOAST_MAX_LEN];
+        snprintf(message, sizeof(message),
+                 "Test M%u: unidad entregada (stock %u)",
+                 (unsigned)(channel + 1),
+                 (unsigned)s_products[channel].stock);
+        set_toast_locked(message);
+        s_ui_dirty = true;
+
+        ESP_LOGI(TAG,
+                 "Prueba de administrador: unidad del canal %u entregada. "
+                 "Stock restante: %u (saldo sin cambios)",
+                 (unsigned)(channel + 1),
+                 (unsigned)s_products[channel].stock);
+
+        state_unlock();
+        ui_notify();
         return;
     }
 
@@ -2232,9 +2691,29 @@ void gui_display_on_unit_dispatched(uint8_t channel)
     ui_notify();
 }
 
-void gui_display_on_dispatch_failed(uint8_t channel, esp_err_t error)
+void gui_display_on_dispatch_failed(uint8_t channel, esp_err_t error,
+                                    bool admin_test)
 {
     if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        return;
+    }
+
+    /*
+     * Fallo de una prueba: no hay pedido que cancelar ni saldo que devolver.
+     * Solo se informa al operador; el stock no cambia porque no cayo unidad.
+     */
+    if (admin_test) {
+        char message[GUI_TOAST_MAX_LEN];
+        snprintf(message, sizeof(message), "Test M%u fallo: %s",
+                 (unsigned)(channel + 1), esp_err_to_name(error));
+        set_toast_locked(message);
+        s_ui_dirty = true;
+
+        ESP_LOGW(TAG, "Prueba de administrador fallida en canal %u: %s",
+                 (unsigned)(channel + 1), esp_err_to_name(error));
+
+        state_unlock();
+        ui_notify();
         return;
     }
 

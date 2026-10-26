@@ -5,10 +5,11 @@
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
 > **Última actualización:** 2026-10-25
-> **Estado global:** **fase P1 de software completada** (encolado atómico y modo
-> administración) y subida a GitHub en esta sesión. Pines confirmados, *homing*,
-> NVS, layout Flex 2×3 y cobro diferido por unidad implementados; compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **592 512 B**, 43 % libre).
+> **Estado global:** **fase P1 de software completada y modo administración
+> ampliado** (inventario, precios mutables en NVS y prueba de motores) y se
+> sube a GitHub al cierre de esta sesión. Pines confirmados, *homing*, NVS, layout Flex 2×3 y cobro
+> diferido por unidad implementados; compila sin errores ni warnings
+> (`maquina_expendedora.bin` = **611 856 B**, 42 % libre).
 > **El flasheo sigue pendiente**: no hay placa conectada ni puerto COM. Queda la
 > validación en hardware (táctil, colores, homing, NVS, cola llena y modo admin).
 
@@ -29,33 +30,32 @@
       `motor_control_check_capacity()`; si no cabe el pedido completo, se
       rechaza entero y la GUI pide reducir la cantidad.
 - [x] Modo administración oculto: pulsación larga de 3 s en la esquina superior
-      izquierda → overlay "Modo Administración" → "Rellenar Stock (Reset a 10)"
-      con guardado en NVS.
+      izquierda → panel con scroll de tres secciones: **inventario** (reset a 10),
+      **precios** (6 productos, ± RD$ 5 y guardado en NVS) y **prueba de motores**
+      (`Test M1`…`Test M6`, sin tocar el saldo).
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
 - [x] *Homing* secuencial de los 6 canales al arrancar (timeout 10 s).
-- [x] Persistencia en NVS de saldo y stock (carga al arrancar, guardado por moneda/unidad).
+- [x] Persistencia en NVS de saldo, stock y precios (carga al arrancar; guardado
+      por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
-- [x] Build limpio (**592 512 B**, 43 % libre) y `Codigo/` versionado.
+- [x] Build limpio (**611 856 B**, 42 % libre) y `Codigo/` versionado.
 
 **Falta (en orden de prioridad):**
 
 1. **Validar en la placa real**: conectar la placa, flashear y probar táctil
    (calibración), layout 2×3, colores/orientación, homing, NVS, rechazo por
-   cola llena y modo administración.
+   cola llena y modo administración completo (precios y tests de motor).
 2. Pruebas automatizadas y CI (transversal).
 3. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
-4. Ampliar el modo administración (cambio de precios, ver ventas, probar
-   motores/sensores); hoy solo reinicia el stock a 10.
+4. Ampliar el modo administración con historial de ventas/recaudación y
+   diagnóstico de sensores (los precios y los tests de motor ya están hechos).
 
 **Estado de las acciones de esta sesión:**
 
-- [x] Encolado atómico implementado en `motor_control.c/.h` y aplicado en
-      `gui_display_confirm_purchase()`.
-- [x] Modo administración oculto con pulsación larga de 3 s, overlay y reset de
-      stock a 10 persistido en NVS.
-- [x] Build limpio sin warnings → **592 512 B** (`0x90a80`), 43 % libre.
-- [x] `git push origin main` → **OK** (`018f06f..9639a48`).
+- [x] Expansión del modo administración: inventario, precios mutables en NVS y
+      prueba de motores con marca `admin_test`.
+- [x] Build limpio sin warnings → **611 856 B** (`0x95610`), 42 % libre.
 - [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
       presente (placa desconectada o cable solo de carga).
 
@@ -134,10 +134,36 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
    pasó de `LV_LAYOUT_GRID` a **Flex `ROW_WRAP`** con celdas al **48 %** de ancho
    y **127 px** de alto, forzando el 2×3 real (antes los productos podían
    colapsar en una sola fila). Build de ese cambio: **589 936 B** (`0x90070`).
-9. **P1 de software (esta sesión)**: encolado atómico con `s_queue_mutex` +
+9. **P1 de software (sesión anterior)**: encolado atómico con `s_queue_mutex` +
    `motor_control_check_capacity()` + `motor_control_enqueue_batch()`, y modo
    administración oculto (pulsación larga de 3 s, overlay y reset de stock a 10
-   con guardado en NVS). Build final: **592 512 B** (`0x90a80`).
+   con guardado en NVS). Build de esa fase: **592 512 B** (`0x90a80`).
+
+### Expansión del modo administración (sesión actual, 2026-10-25)
+
+1. **Precios mutables en NVS**: se eliminó `k_product_prices`; los precios viven
+   en `s_products[i].price_cents` (protegido por `s_state_mutex`) y se cargan /
+   guardan con la clave NVS `prices` (blob de 6 × `uint32_t` = 24 B). Si la clave
+   no existe o es inválida se aplican los valores de fábrica
+   **4000/5000/6000/7000/8000/9000** centavos.
+2. **Panel de administración con scroll**: cabecera fija (título + cierre),
+   línea de estado y contenedor Flex vertical con tres secciones.
+   - **Inventario:** stock actual de los 6 canales y botón
+     `Rellenar Stock (Reset a 10)` (persiste en NVS y mantiene el panel abierto).
+   - **Precios:** una fila por producto con precio actual, `[-]`/`[+]` en pasos de
+     **500 centavos (RD$ 5)** y botón `Guardar Precios`. Los cambios son un
+     borrador local hasta pulsar guardar; el rango válido es RD$ 5.00–1000.00.
+   - **Prueba de motores:** `Test M1`…`Test M6`. Cada test encola **una** unidad
+     con `motor_control_enqueue_batch()` y `admin_test = true`.
+3. **Separación venta real / test:** `motor_request_t` y `motor_event_t` llevan
+   `bool admin_test`, propagado por `motor_control.c` y `main.c`. En
+   `gui_display_on_unit_dispatched(channel, admin_test)`, un test **solo reduce
+   stock en 1** (el producto cae) y guarda NVS; **no toca saldo, pedido ni
+   modal**. Un fallo de test tampoco cancela ningún pedido.
+4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
+   abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
+   el aviso `Espere a que termine el despacho` si hay una compra en curso.
+5. **Build:** **611 856 B** (`0x95610`), **42 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -155,10 +181,10 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | GUI 2×3 + panel inferior | ✅ Implementado | Calibrar táctil y colores |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
 | Encolado atómico | ✅ Implementado | Probar rechazo con la cola llena en placa |
-| Modo administración | ✅ Implementado | Solo reset de stock; cambiar precios pendiente |
+| Modo administración | ✅ Implementado | Panel completo: inventario, precios y test de motores |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
-| Push a GitHub | ✅ Hecho | `origin/main` incluye `9639a48` (P1) y el commit de este documento |
+| Push a GitHub | ✅ Hecho | `origin/main` incluye la expansión del modo administración |
 | Flasheo + monitor | ⏳ Pendiente | Sin puerto COM: conectar la placa |
 
 ---
@@ -176,7 +202,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí. `main` sincronizado con `origin/main` (código P1 `9639a48` + este documento); árbol de trabajo limpio |
+| Repositorio Git | Sí. `main` sincronizado con `origin/main` e incluye la expansión del modo administración |
 
 ### Restricciones que no se deben romper
 
@@ -191,6 +217,8 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 5. Los PCF8574 deben alimentarse a **3.3 V**, no 5 V.
 6. **El saldo y el stock solo se descuentan cuando el motor confirma una vuelta**
    (sensor en LOW). Confirmar la compra únicamente encola el pedido.
+7. **Un test de administrador no es una venta:** solo descuenta el stock de la
+   unidad que cae; nunca toca saldo, pedido ni modal.
 
 ---
 
@@ -447,9 +475,10 @@ Orden de arranque en `app_main()`:
 
 - Modelo de 6 productos: nombre, ruta de imagen (`/sdcard/productos/pN.bmp`),
   precio, stock y cantidad seleccionada.
-- Valores actuales: **stock inicial = 10** (persistido en NVS) y precios de la
-  tabla compilada `k_product_prices`: **RD$ 40/50/60/70/80/90**
-  (4000..9000 centavos). Ya no existe `GUI_USE_DEMO_PRICES`.
+- Valores actuales: **stock inicial = 10** (persistido en NVS) y precios
+  **mutables** en `s_products[i].price_cents`, persistidos en NVS. Valores de
+  fábrica: **RD$ 40/50/60/70/80/90** (4000..9000 centavos). Ya no existe
+  `k_product_prices` ni `GUI_USE_DEMO_PRICES`.
 - Layout:
   - Layout Flex **2 columnas × 3 filas** con `LV_FLEX_FLOW_ROW_WRAP` en el 83 %
     superior (400 px). Cada celda mide **48 %** del ancho útil (≈150 px) y
@@ -471,29 +500,45 @@ Orden de arranque en `app_main()`:
   - Inicializa SPI2, panel ST7796 (`esp_lcd`), retroiluminación LEDC y XPT2046.
   - Registra display e input en LVGL, crea el layout 2×3 y el panel inferior.
   - Crea el Mutex de estado antes de cualquier acceso concurrente.
-  - Carga saldo/stock desde NVS (`storage_load_locked()`).
+  - Carga saldo, stock y precios desde NVS (`storage_load_locked()`).
 - Persistencia:
   - `gui_display_load_state()` / `gui_display_save_state()` son la API pública.
-  - Namespace NVS `vending`: clave `balance` (int64) y clave `stock` (blob de
-    6 bytes).
-  - Se guarda al acreditar monedas, al cambiar stock y en cada unidad cobrada
+  - Namespace NVS `vending`: `balance` (int64), `stock` (blob de 6 bytes) y
+    `prices` (blob de 6 × `uint32_t` = 24 bytes).
+  - Se guarda al acreditar monedas, al cambiar stock, al guardar precios y en
+    cada unidad cobrada o entregada por un test
     (`gui_display_on_unit_dispatched()`).
+- **Modo administración** (pulsación larga de 3 s en la esquina superior
+  izquierda): overlay a pantalla completa con un contenedor Flex vertical
+  desplazable y tres secciones:
+  - **Inventario:** stock de los 6 canales y `Rellenar Stock (Reset a 10)`.
+  - **Precios:** filas con `[-]`/`[+]` (paso RD$ 5) y `Guardar Precios`. El
+    borrador se aplica al estado y a NVS solo al guardar; luego se refresca la
+    pantalla principal.
+  - **Prueba de motores:** `Test M1`…`Test M6`, que encolan una unidad con
+    `admin_test = true`. Se rechazan si hay pedido activo, modal abierto, cola o
+    motor ocupados, o stock 0.
 - `task_gui` inyecta `lv_tick_inc()`, llama a `lv_timer_handler()` y refresca
   los widgets solo cuando el estado cambia (notificación + snapshot).
-- Concurrencia: `s_state_mutex` protege saldo, stock, cantidades, modal y pedido.
-  `task_monedero` y `motor_task` solo mutan estado y despiertan a `task_gui`;
-  **ninguna** llamada a LVGL ocurre fuera de `task_gui`.
+- Concurrencia: `s_state_mutex` protege saldo, stock, precios, cantidades, modal
+  y pedido. `task_monedero` y `motor_task` solo mutan estado y despiertan a
+  `task_gui`; **ninguna** llamada a LVGL ocurre fuera de `task_gui`.
 - `gui_display_confirm_purchase()`:
   - Valida modal abierto, stock, total > 0 y saldo suficiente.
   - Limpia cantidades y registra el pedido en curso.
   - **Solo encola** en `task_despacho`; **no** descuenta saldo ni stock.
   - Si el encolado falla a mitad, cancela las unidades no encoladas y no las
     cobra.
-- `gui_display_on_unit_dispatched()` es el **único punto de cobro**: resta el
-  precio al saldo y reduce el stock en 1 por cada unidad confirmada por el motor.
-- `gui_display_on_dispatch_failed()` marca el pedido como fallido, pone a cero
-  las unidades reservadas y muestra un toast; el saldo de lo no entregado queda
-  intacto.
+- `gui_display_on_unit_dispatched(channel, admin_test)`:
+  - Venta real: **único punto de cobro**; resta el precio al saldo y reduce el
+    stock en 1 por cada unidad confirmada por el motor.
+  - Test de administrador: **solo** reduce el stock en 1 y persiste; no toca
+    saldo, pedido, modal ni totales.
+- `gui_display_on_dispatch_failed(channel, error, admin_test)`:
+  - Venta real: marca el pedido como fallido, pone a cero las unidades
+    reservadas y muestra un toast; el saldo de lo no entregado queda intacto.
+  - Test: solo informa el fallo; no hay pedido que cancelar ni stock que
+    descontar.
 
 ### 5.5 Flujo actual de una compra
 
@@ -504,10 +549,15 @@ Moneda → ISR IO35 → cola de pulsos → task_monedero (ventana 300 ms)
 Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
       → gui_display_confirm_purchase(): valida y ENCOLA (no cobra)
       → task_despacho mueve motores uno a uno
-      → por cada vuelta OK: MOTOR_EVENT_UNIT_DONE
+      → por cada vuelta OK: MOTOR_EVENT_UNIT_DONE (admin_test = false)
       → gui_display_on_unit_dispatched(): saldo -= precio, stock -= 1
       → si un motor falla: MOTOR_EVENT_REQUEST_FAILED
          → se descarta la cola; lo no entregado no se cobra ni baja stock
+
+Administrador → pulsación larga (3 s) → panel → "Test Mx"
+      → motor_control_enqueue_batch(..., admin_test = true)
+      → por cada vuelta OK: MOTOR_EVENT_UNIT_DONE (admin_test = true)
+      → gui_display_on_unit_dispatched(): stock -= 1, NVS; saldo intacto
 ```
 
 ---
@@ -538,10 +588,12 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
     se pulsa la pantalla.
 
 - [x] **Configurar precios y stock reales**
-  - Tabla compilada `k_product_prices` con RD$ 40/50/60/70/80/90.
+  - Precios mutables en `s_products[i].price_cents`, con valores de fábrica
+    RD$ 40/50/60/70/80/90 y persistencia en NVS (`prices`).
+  - El modo administración permite ajustarlos en pasos de RD$ 5.
   - Stock inicial de 10 por producto y persistencia en NVS.
-  - *Criterio:* los 6 productos tienen nombre y precio en un único sitio
-    (`gui_display.c`), y el stock sobrevive a un reinicio.
+  - *Criterio:* los 6 productos tienen nombre y precio editables en un único
+    sitio (`gui_display.c`), y precio + stock sobreviven a un reinicio.
 
 - [ ] **Validación en la placa real (checklist §8)**
   - Flashear y confirmar en el log: `ST7796 listo`, `Tactil XPT2046 listo`,
@@ -587,23 +639,32 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
   - *Criterio:* una compra se acepta completa o se rechaza completa.
 
 - [x] **Persistencia en NVS**
-  - Namespace `vending`: saldo (`balance`) y stock de los 6 productos (`stock`).
-  - Se carga en `gui_display_init()` y se guarda al acreditar monedas y al
-    cobrar cada unidad entregada.
-  - *Criterio:* apagar y encender conserva saldo y stock.
+  - Namespace `vending`: saldo (`balance`), stock de los 6 productos (`stock`) y
+    precios de los 6 productos (`prices`, 6 × `uint32_t`).
+  - Se carga en `gui_display_init()` y se guarda al acreditar monedas, al cobrar
+    o entregar una unidad y al guardar precios desde el modo administración.
+  - *Criterio:* apagar y encender conserva saldo, stock y precios.
 
-- [x] **Modo administración (reset de stock)**
+- [x] **Modo administración completo**
   - Botón invisible de 40×40 px en la esquina superior izquierda, fuera de los
     botones `[-] [+]`.
   - El driver táctil usa `long_press_time = 3000 ms`; al recibir
     `LV_EVENT_LONG_PRESSED` se abre un overlay a pantalla completa que bloquea
     los botones de producto.
-  - El overlay muestra el stock actual y el botón
-    **"Rellenar Stock (Reset a 10)"**: pone los 6 productos a 10, limpia las
-    cantidades seleccionadas, guarda en NVS y vuelve a la pantalla principal.
-  - Si hay un pedido en curso, el reset se rechaza con el aviso
-    "Espere a que termine el despacho".
-  - *Pendiente:* cambiar precios, ver ventas y probar motores desde este modo.
+  - **Inventario:** muestra el stock de los 6 canales y el botón
+    `Rellenar Stock (Reset a 10)`, que pone todo a 10, limpia cantidades y
+    persiste en NVS sin cerrar el panel.
+  - **Precios:** filas con nombre, precio actual, `[-]`/`[+]` (paso RD$ 5) y
+    `Guardar Precios`. Los cambios son un borrador local; al guardar se aplican
+    a `s_products[].price_cents`, se persisten y se refresca la pantalla
+    principal. Rango válido: RD$ 5.00–1000.00.
+  - **Prueba de motores:** `Test M1`…`Test M6` encolan una unidad con
+    `admin_test = true`. El evento de unidad entregada solo descuenta stock;
+    nunca toca saldo, pedido ni modal.
+  - Guardas: el reset y los tests se rechazan con
+    `Espere a que termine el despacho` si hay una compra activa; los tests
+    también se rechazan con motor/cola ocupados o stock 0.
+  - *Pendiente:* historial de ventas/recaudación y diagnóstico de sensores.
 
 ### P2 — Extras / V2.0 (según documento de arquitectura §7)
 
@@ -629,7 +690,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 | # | Problema | Impacto | Dónde |
 | :---: | :--- | :--- | :--- |
 | 1 | ~~Pines de TFT/táctil sin verificar~~ **Resuelto** | Pines confirmados físicamente | `board_config.h` |
-| 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Tabla 4000..9000 + stock en NVS | `gui_display.c` |
+| 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Precios mutables + stock en NVS | `gui_display.c` |
 | 3 | ~~Stock/saldo se descuentan antes del motor~~ **Resuelto** | Cobro por unidad confirmada | `gui_display_on_unit_dispatched()` |
 | 4 | ~~Encolado no atómico~~ **Resuelto** | Lote todo-o-nada con `s_queue_mutex`; rechazo entero si no cabe | `motor_control_enqueue_batch()` |
 | 5 | ~~Sin *homing*~~ **Resuelto** | Homing secuencial con timeout de 10 s | `motor_control_home_all()` |
@@ -703,7 +764,7 @@ app_main: Mutex de despacho creado (un motor a la vez)
 app_main: Bus I2C0 listo (SDA=IO32, SCL=IO25, 100000 Hz)
 motor_control: Homing inicial de 6 canales (timeout 10000 ms por canal)
 motor_control: Homing completado: los 6 canales estan en reposo
-gui_display: NVS vacia: saldo RD$ 0.00 y stock inicial 10 por producto
+gui_display: NVS vacia: saldo RD$ 0.00, stock 10 y precios por defecto
 gui_display: MicroSD montada en /sdcard
 gui_display: Tactil XPT2046 listo (CS=IO33, 1000000 Hz)
 gui_display: ST7796 listo (320x480, SPI2, 40 MHz)
@@ -737,12 +798,18 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
    con el valor correcto.
 9. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
    saldo baja **solo cuando el motor termina la vuelta**.
-10. **Persistencia:** apagar y encender; el saldo y el stock deben conservarse.
+10. **Persistencia:** apagar y encender; el saldo, el stock y los precios deben
+    conservarse.
 11. **Fallo controlado:** desconectar un sensor o bloquear un motor y verificar
     que el pedido se cancela sin cobrar las unidades no entregadas.
 12. **Modo administración:** mantener pulsada la esquina superior izquierda
-    durante 3 s; debe abrirse el overlay, el botón "Rellenar Stock (Reset a 10)"
-    debe dejar los 6 productos a 10 y el valor debe sobrevivir a un reinicio.
+    durante 3 s; debe abrirse el panel con scroll. Verificar:
+    - Inventario: `Rellenar Stock (Reset a 10)` deja los 6 productos a 10 y
+      sobrevive a un reinicio.
+    - Precios: `[-]`/`[+]` cambian el borrador en RD$ 5; `Guardar Precios`
+      actualiza la pantalla principal y persiste tras reiniciar.
+    - Motores: `Test Mx` entrega una unidad, baja el stock en 1 y **no** cambia
+      el saldo. Repetir con stock 0: debe rechazarse.
 13. **Encolado atómico:** con la UI normal es difícil llenar la cola (máximo 6
     líneas por pedido, cola de 8 y un solo pedido a la vez). Para probar el
     rechazo, reducir temporalmente `MOTOR_QUEUE_LENGTH` a 1 o añadir una prueba
@@ -758,11 +825,13 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 
 1. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
    (Algunos módulos de 5 V con optoacoplador necesitan adaptador de nivel).
-2. ¿Se requiere modo administración? ¿Cómo se accede (pantalla, SD, Wi-Fi)?
+2. ¿Se requiere otro método de acceso al modo administración (SD, Wi-Fi, PIN)?
+   Hoy es una pulsación larga de 3 s en la esquina superior izquierda.
 3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
 4. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
    las unidades que salieron? (Hoy se cobran solo las entregadas).
-5. ¿Los precios RD$ 40/50/60/70/80/90 son los definitivos de la v1.0?
+5. ¿Los precios de fábrica RD$ 40/50/60/70/80/90 son los definitivos? Ahora
+   pueden cambiarse desde el panel de administración y quedan en NVS.
 
 ---
 
@@ -772,7 +841,8 @@ Se considerará la versión 1.0 funcional cuando:
 
 1. La pantalla muestra el grid 2×3 con imágenes desde la SD.
 2. El táctil permite ajustar cantidades y confirmar con modal.
-3. Los precios están en una tabla única y el stock persiste en NVS.
+3. Los precios son editables desde el modo administración, persisten en NVS y
+   el stock también sobrevive a un reinicio.
 4. Insertar monedas actualiza el saldo en pantalla en < 1 s.
 5. Confirmar una compra despacha los productos **uno a uno**, sin reinicios.
 6. Si un despacho falla, **no se cobra** lo no entregado (hoy ya se cumple por
@@ -797,6 +867,8 @@ Se considerará la versión 1.0 funcional cuando:
   no llames a LVGL desde `task_monedero` ni desde `motor_task`.
 - Si tocas el flujo de compra, mantén el cobro **solo** en
   `gui_display_on_unit_dispatched()`.
+- La marca `admin_test` viaja en `motor_request_t` y `motor_event_t`: si añades
+  una ruta de despacho nueva, propágala para que un test nunca cobre saldo.
 - Mantén el patrón actual: un `.h` con API documentada y un `.c` con
   implementación; logs con `ESP_LOGI/W/E` y `TAG` por módulo.
 - Cualquier función nueva que energice un motor **debe** tomar

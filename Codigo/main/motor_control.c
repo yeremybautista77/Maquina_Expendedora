@@ -62,7 +62,7 @@ static void *s_event_ctx = NULL;
  * @brief Emite un evento al callback registrado (contexto de motor_task).
  */
 static void emit_event(motor_event_type_t type, uint8_t channel, uint8_t units,
-                       esp_err_t error)
+                       esp_err_t error, bool admin_test)
 {
     const motor_event_cb_t callback = s_event_cb;
     if (callback == NULL) {
@@ -74,6 +74,7 @@ static void emit_event(motor_event_type_t type, uint8_t channel, uint8_t units,
         .channel = channel,
         .units = units,
         .error = error,
+        .admin_test = admin_test,
     };
     callback(&event, s_event_ctx);
 }
@@ -702,7 +703,8 @@ void motor_task(void *arg)
                          (unsigned)(request.channel + 1), (unsigned)(unit + 1),
                          esp_err_to_name(err));
                 emit_event(MOTOR_EVENT_REQUEST_FAILED, request.channel,
-                           (uint8_t)(request.quantity - unit), err);
+                           (uint8_t)(request.quantity - unit), err,
+                           request.admin_test);
                 failed = true;
                 break;
             }
@@ -711,7 +713,8 @@ void motor_task(void *arg)
              * La unidad salio fisicamente: se notifica de inmediato para que la
              * GUI descuente saldo/stock solo por unidades realmente entregadas.
              */
-            emit_event(MOTOR_EVENT_UNIT_DONE, request.channel, 1, ESP_OK);
+            emit_event(MOTOR_EVENT_UNIT_DONE, request.channel, 1, ESP_OK,
+                       request.admin_test);
 
             if ((unit + 1) < request.quantity) {
                 vTaskDelay(pdMS_TO_TICKS(MOTOR_REPEAT_DELAY_MS));
@@ -739,7 +742,7 @@ void motor_task(void *arg)
 
         /* Fin de pedido: la cola quedo vacia y no hay motor girando. */
         if (uxQueueMessagesWaiting(s_dispatch_queue) == 0) {
-            emit_event(MOTOR_EVENT_IDLE, 0, 0, ESP_OK);
+            emit_event(MOTOR_EVENT_IDLE, 0, 0, ESP_OK, false);
         }
     }
 }

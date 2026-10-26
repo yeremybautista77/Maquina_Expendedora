@@ -133,20 +133,23 @@ Codigo/
   reactivo y botón grande `[ Confirmar ]`; modal `[Sí] [No]` y toast.
   El estado (saldo, stock, cantidades, pedido) está protegido por un Mutex y
   **todas** las llamadas a LVGL ocurren en `task_gui`.
-- **Persistencia NVS:** `nvs_flash_init()` en `main.c`; el saldo y el stock de
-  los 6 productos se cargan al arrancar y se guardan al acreditar monedas y al
-  cobrar cada unidad despachada. Los precios viven en la tabla compilada
-  (RD$ 40/50/60/70/80/90).
+- **Persistencia NVS:** `nvs_flash_init()` en `main.c`; saldo, stock y precios de
+  los 6 productos se cargan al arrancar y se guardan al acreditar monedas, al
+  cobrar/entregar una unidad y al guardar precios desde el modo administración.
+  Precios de fábrica: RD$ 40/50/60/70/80/90 (mutables, clave NVS `prices`).
 - **Cobro diferido (corrección del riesgo #3):** al confirmar, la GUI **solo
   encola** el pedido; no descuenta saldo ni stock. El descuento ocurre en
   `gui_display_on_unit_dispatched()`, únicamente cuando el motor confirma una
   vuelta con el sensor en LOW. Si un motor falla por timeout, se descarta el
   resto del pedido y **lo no entregado no se cobra ni reduce stock**.
+- **Modo administración:** pulsación larga de 3 s en la esquina superior
+  izquierda. Panel con scroll de tres secciones: inventario (reset a 10),
+  precios (`[-]`/`[+]` en RD$ 5 + guardado en NVS) y prueba de motores
+  (`Test M1`…`Test M6`). Un test solo descuenta stock; nunca toca el saldo.
 
 ## Pendiente (iterativo)
 
 1. Calibrar el táctil en la placa real
    (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`, `TODO_CALIBRAR`).
-2. Hacer atómico el encolado (hoy se encola producto por producto).
-3. Añadir modo administración para reponer stock y ajustar precios.
-4. Telemetría Wi-Fi y audio (V2.0).
+2. Validar en placa el modo administración completo (precios y tests de motor).
+3. Telemetría Wi-Fi y audio (V2.0).
