@@ -5,12 +5,12 @@
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
 > **Última actualización:** 2026-10-25
-> **Estado global:** **firmware de la v1.0 completo en laboratorio**. Pines
-> confirmados, *homing*, NVS, rediseño de GUI y cobro diferido por unidad
-> implementados; compila sin errores ni warnings y está commiteado (`3fbefa7`).
-> Solo queda la **validación en la placa real** (táctil, colores, homing, NVS),
-> el encolado atómico y el modo administración. `main` tiene **commits locales
-> pendientes de push** (incluido el de este documento).
+> **Estado global:** **firmware de la v1.0 completo en laboratorio y subido a
+> GitHub** (`origin/main` = `80f3282`). Pines confirmados, *homing*, NVS,
+> layout Flex 2×3 y cobro diferido por unidad implementados; compila sin errores
+> ni warnings. **El flasheo no se pudo ejecutar**: la placa no está conectada
+> (no hay ningún puerto COM presente). Queda la validación en hardware, el
+> encolado atómico y el modo administración.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -34,24 +34,32 @@
 
 **Falta (en orden de prioridad):**
 
-1. **Validar en la placa real**: táctil (calibración), colores/orientación,
-   homing con un motor fuera de reposo y persistencia NVS tras reinicio.
+1. **Validar en la placa real**: conectar la placa, flashear y probar táctil
+   (calibración), layout 2×3, colores/orientación, homing y NVS.
 2. Encolado atómico de la compra (P1).
 3. Modo administración para reponer stock y ajustar precios (P1).
 4. Pruebas automatizadas y CI (transversal).
 5. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
-6. **`git push`**: hay commits locales sin subir a `origin/main`.
+
+**Estado de las acciones de esta sesión:**
+
+- [x] Layout 2×3 corregido con Flex `ROW_WRAP` y celdas al 48 %.
+- [x] Documento actualizado con las respuestas.
+- [x] `git push origin main` → **OK** (`fbe3060..80f3282`).
+- [ ] Flasheo + monitor serie → **no ejecutado**: COM3 no existe y no hay
+      ningún puerto COM presente (placa desconectada o cable solo de carga).
 
 ---
 
 ## 0. Preguntas para ti (responde debajo de cada una)
 
 > Estas eran las dos decisiones pendientes de esta sesión. **Ambas respondidas**
-> (ver abajo); el push y el flasheo se ejecutan en esta misma sesión.
+> (ver abajo); el push se completó y el flasheo se intentó, pero no había placa
+> conectada.
 
 ### Pregunta 1 — ¿Subo los commits a GitHub?
 
-`main` tiene **commits locales sin subir** a `origin/main`
+`main` tenía **commits locales sin subir** a `origin/main`
 (`6d5ec5e`, `c118960`, `37b05c1`, `1d8c3e5`, `3fbefa7` y los de documentación
 posteriores).
 
@@ -59,6 +67,9 @@ posteriores).
 - Si dices que sí, ejecuto `git push origin main` (no toco nada más).
 
 **Respuesta:** Sí, haz push. Asegura los commits locales en `origin/main`.
+
+**Ejecutado:** `git push origin main` → **OK** (`fbe3060..80f3282`).
+`main` y `origin/main` quedaron sincronizados.
 
 ### Pregunta 2 — ¿Flasheamos ahora en la placa real?
 
@@ -71,12 +82,24 @@ Para probar homing, NVS y táctil necesito la placa conectada.
 **Respuesta:** Sí, flashea y activa el monitor serie usando el puerto **COM3**
 (o detéctalo automáticamente si COM3 falla).
 
+**Ejecutado:** `.\compilar.ps1 -Flash -Port COM3 -Monitor` → el build fue
+correcto, pero **esptool no pudo abrir COM3**:
+
+```
+A fatal error occurred: Could not open COM3, the port is busy or doesn't exist.
+```
+
+Se buscaron puertos automáticamente (`[System.IO.Ports.SerialPort]::GetPortNames()`
+y `Get-PnpDevice -Class Ports -PresentOnly`): **no hay ningún COM presente**.
+Para completar este paso hay que conectar la placa (y usar un cable de datos) y
+volver a ejecutar el comando; si aparece otro puerto, sustituir `COM3` por ese.
+
 ---
 
 ### Últimos cambios de esta sesión (2026-10-25)
 
 Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno de la GUI`
-(10 archivos, +722 / −258).
+(10 archivos, +722 / −258). El fix de layout y este documento van en `80f3282`.
 
 1. **Pines confirmados** en `board_config.h`: I2C **SDA=IO32 / SCL=IO25**, TFT
    **14/13/12/15/2/NC/27**, táctil **CS=33 / IRQ=NC** y MicroSD
@@ -121,7 +144,8 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Modo administración | ❌ Falta (P1) | Reponer stock / cambiar precios |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
-| Push a GitHub | ⏳ Pendiente | Commits locales sin subir (ver Pregunta 1) |
+| Push a GitHub | ✅ Hecho | `origin/main` = `80f3282` |
+| Flasheo + monitor | ⏳ Pendiente | Sin puerto COM: conectar la placa |
 
 ---
 
@@ -138,7 +162,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Tick de FreeRTOS | 1000 Hz (1 ms) |
 | Fuente de verdad de la arquitectura | `../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md` |
 | Carpeta de código | `Codigo/` (este directorio) |
-| Repositorio Git | Sí. `main` con commits locales pendientes de push; último: el de este documento (2026-10-25). Árbol de trabajo limpio |
+| Repositorio Git | Sí. `main` sincronizado con `origin/main` (`80f3282`); árbol de trabajo limpio |
 
 ### Restricciones que no se deben romper
 
@@ -562,8 +586,8 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
 
 ### Calidad / tooling (transversal)
 
-- [x] Historial de commits del firmware en `main` (último: `3fbefa7`).
-- [ ] **`git push`** de los commits locales a `origin/main` (ver §0).
+- [x] Historial de commits del firmware en `main` (último: `80f3282`).
+- [x] **`git push`** de los commits locales a `origin/main` (ver §0).
 - [x] `.gitignore` excluye `build/`, `sdkconfig`, `managed_components/`, etc.
 - [ ] Añadir pruebas de la lógica pura (mapeo de pulsos, total, stock) con
       Unity o tests de host; hoy no hay ninguno.
@@ -634,6 +658,12 @@ Para flashear (requiere placa conectada):
 ```powershell
 .\compilar.ps1 -Flash -Port COM3 -Monitor
 ```
+
+> **Estado 2026-10-25:** este comando se ejecutó y falló con
+> `Could not open COM3, the port is busy or doesn't exist.` No hay ningún puerto
+> COM presente en el equipo. Antes de reintentar: conectar la placa con un cable
+> de **datos**, comprobar que aparece en el Administrador de dispositivos y
+> sustituir `COM3` por el puerto real (`[System.IO.Ports.SerialPort]::GetPortNames()`).
 
 Salir del monitor: `Ctrl + ]`.
 
