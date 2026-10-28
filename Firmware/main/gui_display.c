@@ -13,8 +13,9 @@
  * Regla de negocio critica (riesgo #3):
  *   gui_display_confirm_purchase() SOLO encola el pedido. El saldo y el stock
  *   se descuentan UNICAMENTE en gui_display_on_unit_dispatched(), que motor_task
- *   invoca cuando una unidad completa su vuelta (sensor LOW). Si el motor falla,
- *   las unidades no entregadas no se cobran ni reducen stock.
+ *   invoca cuando una unidad se entrega (sensor en M1-M4 o pulso por tiempo en
+ *   M5-M6). Si el motor falla, las unidades no entregadas no se cobran ni
+ *   reducen stock.
  *
  * Concurrencia:
  *   - s_state_mutex protege saldo, stock, cantidades, pedido y modal.

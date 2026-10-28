@@ -13,8 +13,12 @@
  *    La ISR se dispara por flanco de bajada (senal activa en LOW).
  *  - Los dos PCF8574 comparten el mismo bus I2C (SDA=IO32, SCL=IO25):
  *        0x20 -> modulo de relees (motores de 12 V), activo en LOW
- *        0x21 -> modulo de sensores de fin de carrera (contacto seco a GND),
- *                LOW = final de carrera alcanzado
+ *        0x21 -> sensores de fin de carrera SOLO en P0..P3 (M1..M4). La salida
+ *                de 12 V del micro-switch se escala con un divisor externo de
+ *                10 kOhm en serie y 3.3 kOhm a GND (~2.97 V). La placa LK20052
+ *                queda intacta: no se cortan pistas.
+ *        P4/P5 de 0x21 no tienen conexion fisica: M5 y M6 (LK20052 Fy-007, de
+ *        2 hilos) se despachan en lazo abierto con un pulso temporizado.
  *  - Pantalla TFT ST7796 de 320x480 (vertical) por SPI dedicado (HSPI/SPI2).
  *  - Tactil resistivo XPT2046 por SPI, compartiendo el bus de la TFT.
  *  - MicroSD por VSPI (SPI3): CS=5, CLK=18, MISO=19, MOSI=23.
@@ -53,10 +57,26 @@ extern "C" {
 #define BOARD_I2C_CLOCK_HZ          100000         /* 100 kHz: robusto con cables largos */
 
 #define BOARD_I2C_ADDR_RELAY        0x20    /* PCF8574: P0..P5 -> relees de motor */
-#define BOARD_I2C_ADDR_SENSOR       0x21    /* PCF8574: P0..P5 -> fines de carrera */
+#define BOARD_I2C_ADDR_SENSOR       0x21    /* PCF8574: P0..P3 -> fines de carrera M1..M4 */
 
 #define BOARD_RELAY_ACTIVE_LOW      1       /* Modulo de relees tipico activo en LOW */
-#define BOARD_SENSOR_ACTIVE_LOW     1       /* Micro-switch cierra a GND (LOW = final de carrera) */
+
+/* ==========================================================================
+ *  Estrategia hibrida de motores
+ *
+ *  M1..M4 (3 hilos, LK20052): micro-switch de 12 V acondicionado con divisor
+ *  10 kOhm / 3.3 kOhm. En reposo el switch entrega 12 V y el divisor deja
+ *  ~2.97 V en el pin del PCF8574, por lo que el reposo se lee HIGH.
+ *  SENSOR_HOME_LEVEL abstrae esa polaridad: cambiarla a 0 invierte la
+ *  interpretacion sin tocar el circuito.
+ *
+ *  M5..M6 (2 hilos, LK20052 Fy-007): sin sensor ni homing. Se aplica un pulso
+ *  calibrado de BOARD_TIMED_PULSE_MS al rele correspondiente de 0x20.
+ * ========================================================================== */
+#define BOARD_SENSOR_CHANNEL_COUNT  4       /* Canales M1..M4 con retroalimentacion */
+#define BOARD_TIMED_CHANNEL_FIRST   4       /* Primer canal por tiempo (M5) */
+#define SENSOR_HOME_LEVEL           1       /* 1 = reposo HIGH (~2.97 V) | 0 = reposo LOW */
+#define BOARD_TIMED_PULSE_MS        2000    /* Pulso calibrado en lazo abierto */
 
 /* ==========================================================================
  *  MicroSD por SPI (Seccion 2)

@@ -198,7 +198,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Mutex de despacho creado (un motor a la vez)");
 
     /*
-     * 2. Bus I2C + expansores PCF8574 (relees 0x20 y sensores 0x21).
+     * 2. Bus I2C + expansores PCF8574 (relees 0x20; sensores 0x21 en M1-M4).
      */
     i2c_master_bus_handle_t i2c_bus = NULL;
     if (init_i2c_bus(&i2c_bus) == ESP_OK) {
