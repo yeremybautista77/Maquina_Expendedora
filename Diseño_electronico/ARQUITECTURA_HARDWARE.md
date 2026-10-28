@@ -1,6 +1,6 @@
 # Arquitectura de Hardware — Máquina Expendedora Automática de 6 Canales
 
-**Versión 1.1 · 26 de octubre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
+**Versión 1.2 · 28 de octubre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
 
 > **Nota de alcance.** Este documento describe exclusivamente el dominio físico del sistema: voltajes, corrientes, estados lógicos, protecciones, conectores y topología de interconexión. El comportamiento del sistema y la lógica de control se documentan por separado.
 
@@ -19,7 +19,12 @@ graph TD
         R12["Riel 12 V"]
         COIN["Monedero CH-926<br/>12 V · salida open-collector"]
         RELAYS["Banco de relés · 6 canales<br/>bobinas 12 V · contactos COM / NO"]
-        MOTORS["6 motores DC JGY370<br/>12 V · micro-switch trasero"]
+        MOTORS_S["M1–M4 · LK20052 (3 hilos)<br/>12 V · micro-switch de fin de carrera"]
+        MOTORS_T["M5–M6 · LK20052 Fy-007 (2 hilos)<br/>12 V · sin sensor"]
+    end
+
+    subgraph COND["ACONDICIONAMIENTO DE SENSORES"]
+        DIV["Divisores 10 kΩ / 3.3 kΩ<br/>12 V → ≈ 2.97 V · ×4"]
     end
 
     subgraph MID["DOMINIO INTERMEDIO · 5 V"]
@@ -30,7 +35,7 @@ graph TD
         ESP["Placa Hosyond 4.0<br/>ESP32-32E + LDO 3.3 V"]
         P33["Riel 3.3 V"]
         M20["PCF8574 · 0x20<br/>actuadores"]
-        M21["PCF8574 · 0x21<br/>sensores"]
+        M21["PCF8574 · 0x21<br/>sensores M1–M4"]
     end
 
     subgraph ISO["INTERFAZ AISLADA"]
@@ -54,8 +59,10 @@ graph TD
     R12 -->|"12 V"| COIN
     R12 -->|"bobinas 12 V"| RELAYS
     R12 -->|"contactos COM"| RELAYS
-    RELAYS -->|"12 V conmutado"| MOTORS
-    MOTORS -->|"contacto seco"| M21
+    RELAYS -->|"12 V conmutado"| MOTORS_S
+    RELAYS -->|"12 V conmutado"| MOTORS_T
+    MOTORS_S -->|"señal 12 V"| DIV
+    DIV -->|"≈ 2.97 V · HIGH en reposo"| M21
     M20 -->|"P0…P5 · activo LOW"| RELAYS
 
     COIN -->|"pulso 12 V"| OPTO
@@ -83,13 +90,15 @@ graph TD
     classDef logic fill:#e8f1fb,stroke:#2471a3,stroke-width:2px,color:#111
     classDef iso fill:#f4ecf7,stroke:#7d3c98,stroke-width:2px,color:#111
     classDef periph fill:#e9f7ef,stroke:#1e8449,stroke-width:2px,color:#111
+    classDef cond fill:#fef9e7,stroke:#b7950b,stroke-width:2px,color:#111
     classDef neutral fill:#f2f3f4,stroke:#566573,stroke-width:2px,color:#111
 
-    class AC,PSU,FUSE,R12,COIN,RELAYS,MOTORS power
+    class AC,PSU,FUSE,R12,COIN,RELAYS,MOTORS_S,MOTORS_T power
     class BUCK,R5 mid
     class ESP,P33,M20,M21 logic
     class OPTO iso
     class TFT,TOUCH,SD periph
+    class DIV cond
     class STAR neutral
 ```
 
@@ -101,6 +110,7 @@ graph TD
 | **Intermedio** | 5 V DC | Únicamente la entrada de 5 V de la placa base Hosyond |
 | **Lógico** | 3.3 V DC | ESP32-32E, expansores I2C y lógica de pantalla/táctil/SD |
 | **Interfaz aislada** | 12 V → 3.3 V | Adaptación del pulso del monedero mediante optoacoplador |
+| **Acondicionamiento de sensores** | 12 V → 2.97 V | Divisor pasivo 10 kΩ / 3.3 kΩ por canal M1–M4 |
 | **Periféricos SPI** | 3.3 V DC | Panel TFT, táctil resistivo y almacenamiento MicroSD |
 
 ### 1.2 Lectura del diagrama
@@ -108,9 +118,10 @@ graph TD
 1. **El cerebro del sistema** es la placa Hosyond 4.0" con módulo **ESP32-32E**. Integra el regulador que genera el riel lógico de 3.3 V, el conector de pantalla y los puertos de expansión JST.
 2. **La potencia no pasa por el ESP32.** El microcontrolador solo entrega señales de control de baja corriente a los expansores I2C; la conmutación de los 12 V la realizan los contactos de los relés.
 3. **El monedero está eléctricamente separado** de la lógica mediante un optoacoplador PC817. El pulso de 12 V se convierte en una señal de 3.3 V compatible con el pin IO35.
-4. **Los dos expansores PCF8574 comparten un único bus I2C** y se diferencian por dirección: `0x20` para actuar sobre los relés, `0x21` para leer los fines de carrera.
+4. **Los dos expansores PCF8574 comparten un único bus I2C** y se diferencian por dirección: `0x20` para actuar sobre los relés, `0x21` para leer los fines de carrera de M1–M4 a través de los divisores 10 kΩ / 3.3 kΩ.
 5. **Los periféricos SPI no comparten bus entre sí**: la pantalla y el táctil usan SPI2; la MicroSD usa SPI3.
 6. **El riel de 5 V es exclusivo de la placa base.** El LM2596 no alimenta relés ni motores; solo entrega los 5 V que la placa Hosyond convierte internamente a 3.3 V.
+7. **La flota de motores es híbrida.** M1–M4 son LK20052 de 3 hilos con micro-switch y se despachan en bucle cerrado. M5–M6 son LK20052 Fy-007 de 2 hilos, sin sensor, y se despachan en lazo abierto con un pulso calibrado de ~2.0 s. Las entradas P4 y P5 del expansor `0x21` no tienen conexión física.
 
 ### 1.3 Identificación de la placa base
 
@@ -143,7 +154,7 @@ graph LR
     FUSE --> R12["Riel 12 V"]
     R12 --> COILS["Bobinas 12 V<br/>de los 6 relés"]
     R12 --> COM["Contactos COM / NO<br/>de los 6 relés"]
-    COM --> MOT["6 motores<br/>DC 12 V"]
+    COM --> MOT["M1–M4 con sensor<br/>M5–M6 por tiempo<br/>DC 12 V"]
     R12 --> COIN["Monedero<br/>CH-926"]
     R12 --> BUCK["LM2596<br/>12 V → 5 V"]
     BUCK --> R5["Riel 5 V"]
@@ -190,7 +201,7 @@ graph LR
 | Riel | Carga | Corriente típica | Pico estimado | Base del cálculo |
 | :--- | :--- | ---: | ---: | :--- |
 | 12 V | Monedero CH-926 | 0.10 A | 0.20 A | Consumo en reposo y durante aceptación |
-| 12 V | Motor JGY370 (1 activo) | 0.40 A | 2.50 A | Corriente de arranque con carga mecánica |
+| 12 V | Motor LK20052 (1 activo) | 0.40 A | 2.50 A | Corriente de arranque con carga mecánica |
 | 12 V | Bobina de relé 12 V (1 activa) | 0.04 A | 0.05 A | Relé tipo SRD-12VDC |
 | 12 V | Entrada del LM2596 | 0.20 A | 0.30 A | 5 V × 0.55 A ÷ 0.80 ÷ 12 V ≈ 0.29 A |
 | **12 V** | **Total del riel** | **≈ 0.75 A** | **≈ 3.1 A** | Fuente de 10 A: margen > 3.2× |
@@ -230,14 +241,14 @@ Toda la máquina adopta la convención **activo en nivel BAJO**: el estado de re
 | Señal | Estado en reposo | Estado activo | Mecanismo físico |
 | :--- | :--- | :--- | :--- |
 | **Pulso de monedero (IO35)** | HIGH ≈ 3.3 V | LOW ≤ 0.4 V | Optoacoplador conduce y hunde la línea |
-| **Fin de carrera (0x21)** | HIGH ≈ 3.3 V | LOW ≤ 0.4 V | Micro-switch cierra a GND |
+| **Fin de carrera (0x21, M1–M4)** | HIGH ≈ 2.97 V (en reposo) | LOW ≈ 0 V (fuera de reposo) | El micro-switch abre la señal de 12 V y el divisor la lleva a 0 V |
 | **Entrada de relé (0x20)** | HIGH ≈ 3.3 V | LOW ≤ 0.4 V | LED del opto interno conduce y excita la bobina |
 
 **Ventajas de esta convención:**
 
 - **Inmunidad al ruido.** Un cable desconectado o una soldadura fría tienden a quedar en alto por el pull-up, no a generar activaciones falsas.
 - **Compatibilidad con salidas open-collector / open-drain.** El monedero y los expansores PCF8574 hunden corriente a GND; no necesitan entregar tensión.
-- **Seguridad ante fallo.** En los sensores, un circuito abierto se interpreta como "fuera de reposo" y el motor se detiene por límite de tiempo en lugar de girar indefinidamente. En los relés, la pérdida de la señal de control deja la bobina desenergizada y el motor apagado.
+- **Seguridad ante fallo.** En los canales con sensor, un cable abierto o un switch que no cierra deja la entrada en LOW (fuera de reposo) y el motor se detiene por límite de tiempo en lugar de girar indefinidamente. En los relés, la pérdida de la señal de control deja la bobina desenergizada y el motor apagado.
 - **Estandarización.** Todo el sistema se diagnostica con la misma regla: **0 V = activo**.
 
 ### 3.2 Monedero CH-926 con optoacoplador PC817
@@ -287,41 +298,91 @@ El módulo HiLetgo integra esta resistencia; el cálculo se incluye como referen
 
 *Qué debe mostrar la fotografía:* bornera de alimentación (12 V/GND), línea de salida de pulsos, selección de monedas y sentido de inserción.
 
-### 3.3 Sensores de fin de carrera (módulo 0x21)
+### 3.3 Estrategia híbrida de sensores y motores
 
-Cada motor reductor incorpora un micro-switch que señala una vuelta completa. En su configuración de fábrica, uno de los terminales del switch está unido a la alimentación de 12 V del motor, lo que **destruiría el PCF8574** si se conectara directamente.
+La máquina utiliza dos topologías de motorreductor, ambas de 12 V y conmutadas por los relés del expansor `0x20`. La diferencia está en el tipo de retroalimentación disponible:
 
-**Acondicionamiento obligatorio — contacto seco:**
+| Grupo | Canales | Modelo | Hilos | Retroalimentación | Modo de despacho |
+| :--- | :---: | :--- | :---: | :--- | :--- |
+| **M1–M4** | 1–4 | LK20052 | 3 | Micro-switch de fin de carrera | Bucle cerrado por sensor |
+| **M5–M6** | 5–6 | LK20052 Fy-007 | 2 | Ninguna | Lazo abierto por tiempo |
 
-1. Se corta físicamente la pista de cobre de la placa LK20052 del motor con un bisturí.
-2. El micro-switch queda aislado de los 12 V y se convierte en un **contacto seco**.
-3. Un terminal se conecta al puerto Pn del expansor `0x21` y el otro a **GND lógico**.
-4. Al cerrarse, el switch hunde la entrada a 0 V (LOW). Al abrirse, el puerto vuelve a nivel alto por su fuente de corriente interna.
+#### 3.3.1 Canales M1–M4 — fin de carrera con divisor de tensión
 
-| Estado del motor | Micro-switch | Puerto 0x21 | Interpretación |
-| :--- | :--- | :--- | :--- |
-| En reposo (fin de carrera alcanzado) | Cerrado | LOW ≈ 0 V | Canal en posición segura |
-| Girando | Abierto | HIGH ≈ 3.3 V | Canal fuera de reposo |
+Cada motor LK20052 de 3 hilos incorpora un micro-switch cuyo terminal de señal está referenciado a los **12 V del propio motor**. Conectarlo directamente al PCF8574 destruiría el expansor. En lugar de cortar pistas o añadir módulos, la señal se acondiciona con un **divisor resistivo pasivo por canal**:
 
-> **⚠️ Nota de diseño — Pull-up externo en cables largos.** El PCF8574 utiliza una fuente de corriente interna muy débil (≈ 100 µA) como pull-up. Con cables de más de 50 cm o ambientes con ruido de motores, se recomienda añadir una resistencia externa de **4.7 kΩ a 3.3 V** por cada entrada de sensor, junto con un capacitor de **100 nF a GND** para filtrar EMI.
+- **10 kΩ en serie** entre la salida del micro-switch y el puerto Pn del expansor `0x21`.
+- **3.3 kΩ entre el puerto Pn y GND**.
 
-**Tiempo máximo de energización por canal:** 10 s. Es un límite de protección térmica del motor y del cableado; si el sensor no confirma el reposo en ese plazo, la bobina del relé debe desenergizarse.
+```mermaid
+graph LR
+    SW["Micro-switch LK20052<br/>señal 12 V"] --> R1["R serie<br/>10 kΩ · 1/4 W"]
+    R1 --> NODE(("Pn · 0x21"))
+    NODE --> R2["R pull-down<br/>3.3 kΩ · 1/4 W"]
+    R2 --> GND["GND lógico"]
+    NODE -->|"≈ 2.97 V en reposo"| PCF["PCF8574 · 0x21"]
+```
+
+**Cálculo del divisor:**
+
+> **V<sub>out</sub> = 12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) = 2.977 V ≈ 2.97 V**
+
+| Parámetro | Valor | Observación |
+| :--- | :---: | :--- |
+| Tensión de entrada | 12 V | Salida del micro-switch |
+| Tensión en el puerto Pn | ≈ 2.97 V | Inferior a V<sub>CC</sub> = 3.3 V |
+| Umbral V<sub>IH</sub> del PCF8574 | ≈ 2.31 V (0.7 × V<sub>CC</sub>) | 2.97 V queda por encima del umbral |
+| Corriente del divisor | ≈ 0.90 mA | 12 V / 13.3 kΩ |
+| Disipación en 10 kΩ | ≈ 8.1 mW | Resistencia de 1/4 W |
+| Disipación en 3.3 kΩ | ≈ 2.7 mW | Resistencia de 1/4 W |
+
+**Interpretación de estados:**
+
+| Estado del mecanismo | Micro-switch | Puerto Pn | Nivel lógico |
+| :--- | :--- | :---: | :---: |
+| **En reposo** (fin de carrera alcanzado) | Cerrado, entrega 12 V | ≈ 2.97 V | **HIGH** |
+| **Fuera de reposo** (girando) | Abierto | 0 V por la resistencia a GND | **LOW** |
+
+La resistencia de **3.3 kΩ** cumple dos funciones simultáneas: es la rama inferior del divisor y, al mismo tiempo, actúa como **pull-down** que fija 0 V cuando el switch se abre. Así, la entrada del expansor nunca queda flotante y un cable abierto se interpreta como "fuera de reposo" (estado seguro).
+
+> **⚠️ Nota de diseño — Placa LK20052 intacta.** No se corta ninguna pista de cobre ni se compra un módulo acondicionador adicional. Los cuatro divisores se montan externamente (placa perforada pequeña o dentro del mazo) y se conectan entre el hilo de señal de cada motor y el puerto P0–P3 del expansor `0x21`.
+
+**Abstracción de la polaridad en firmware.** La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con el divisor descrito, el reposo es **HIGH** y la macro vale `1`. Si en el montaje final la señal se invierte (por ejemplo, por un cambio de switch o de cableado), basta cambiar la macro a `0` para que el firmware interprete el reposo en LOW, sin modificar el circuito ni volver a cablear.
+
+**Límites de tiempo en firmware (M1–M4).** El *homing* de arranque usa `MOTOR_HOMING_TIMEOUT_MS` = 10 s por canal. Durante un despacho, el firmware concede 3 s (`MOTOR_START_TIMEOUT_MS`) para que el motor abandone el reposo y hasta 20 s (`MOTOR_TRAVEL_TIMEOUT_MS`) para que complete la vuelta. En ambos casos el relé se desenergiza al vencer el plazo, como protección térmica del motor y del cableado.
+
+#### 3.3.2 Canales M5–M6 — lazo abierto por temporización
+
+Los motores **LK20052 Fy-007** son de **2 hilos**: no incorporan micro-switch ni línea de retorno de posición. Su despacho es en **lazo abierto (Open-Loop)**:
+
+1. El firmware energiza el relé del canal en el PCF8574 `0x20` (P4 para M5, P5 para M6).
+2. Mantiene la bobina activa durante un **pulso calibrado de ~2.0 s**.
+3. Desenergiza el relé y libera el Mutex de despacho.
+
+| Aspecto | M5–M6 |
+| :--- | :--- |
+| Entradas P4/P5 del PCF8574 `0x21` | **Sin conexión física**; el firmware no las lee |
+| Confirmación de vuelta | No existe; la duración del pulso es la referencia |
+| Ajuste de dosis | Constante de calibración de ~2.0 s en firmware |
+| Protección | Límite de tiempo del pulso y Mutex de un motor a la vez |
+
+> **⚠️ Nota de diseño — Calibración del pulso.** La duración de ~2.0 s debe ajustarse con el espiral cargado y la tensión real de la fuente. Un pulso demasiado corto no entrega el producto; uno demasiado largo puede forzar el mecanismo. Al no haber sensor, la repetibilidad depende de la calibración mecánica y de mantener constante la tensión de 12 V.
 
 **Figura 7 — Sensores de fin de carrera**
 
 ![Módulo de sensores 0x21](./img/modulo_sensores.png)
 
-*Descripción técnica:* módulo expansor PCF8574 configurado en dirección `0x21`, con los puertos P0–P5 conectados a los contactos secos de los seis motores.
+*Descripción técnica:* módulo expansor PCF8574 configurado en dirección `0x21`. Solo los puertos P0–P3 reciben la señal acondicionada de los canales M1–M4; P4 y P5 quedan sin conexión porque M5 y M6 no tienen sensor.
 
-*Qué debe mostrar la fotografía:* configuración de los DIP switches de dirección, bornera de bus I2C (VCC/GND/SDA/SCL), conexión de los seis hilos de sensor y punto común de GND.
+*Qué debe mostrar la fotografía:* configuración de los DIP switches de dirección, bornera de bus I2C (VCC/GND/SDA/SCL), los cuatro hilos de sensor con sus divisores y el punto común de GND. Debe apreciarse que P4 y P5 no tienen conductor.
 
 **Figura 8 — Motor reductor y micro-switch**
 
-![Motor reductor JGY370](./img/motor_jgy370.png)
+![Motor reductor LK20052](./img/motor_lk20052.png)
 
-*Descripción técnica:* motorreductor DC de 12 V con leva de accionamiento y micro-switch trasero para detección de vuelta completa.
+*Descripción técnica:* motorreductor DC de 12 V con leva de accionamiento y micro-switch trasero para detección de vuelta completa. La placa LK20052 se conserva intacta: la señal de 12 V del switch se escala con el divisor 10 kΩ / 3.3 kΩ antes de entrar al expansor.
 
-*Qué debe mostrar la fotografía:* placa LK20052 con el corte de pista visible, identificación de los terminales del motor y del switch, y montaje mecánico de la leva.
+*Qué debe mostrar la fotografía:* placa LK20052 sin cortes de pista, identificación de los terminales del motor y del switch, montaje del divisor por canal y posición mecánica de la leva.
 
 ### 3.4 Banco de relés (módulo 0x20)
 
@@ -372,7 +433,7 @@ El banco está formado por **6 canales de relé con bobina de 12 V**, entradas o
 | Módulo | A2 | A1 | A0 | Dirección de 7 bits | Función |
 | :--- | :---: | :---: | :---: | :--- | :--- |
 | PCF8574 de actuadores | 0 | 0 | 0 | `0x20` | Escritura de relés |
-| PCF8574 de sensores | 0 | 0 | 1 | `0x21` | Lectura de fines de carrera |
+| PCF8574 de sensores | 0 | 0 | 1 | `0x21` | Lectura de fines de carrera M1–M4 |
 
 > **⚠️ Nota de diseño — Variante del circuito integrado.** El **PCF8574** tiene dirección base `0x20`; el **PCF8574A** tiene dirección base `0x38`. Si los módulos montan la variante "A", las direcciones son `0x38` y `0x39`, y los DIP switches se ajustan en consecuencia.
 
@@ -472,17 +533,17 @@ El banco está formado por **6 canales de relé con bobina de 12 V**, entradas o
 
 ### 4.6 Matriz de canales: relés, motores y sensores
 
-| Canal | PCF8574 `0x20` | Entrada de relé | Contacto | Motor | PCF8574 `0x21` | Sensor |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1** | P0 | IN1 | COM1 / NO1 | M1 | P0 | S1 |
-| **2** | P1 | IN2 | COM2 / NO2 | M2 | P1 | S2 |
-| **3** | P2 | IN3 | COM3 / NO3 | M3 | P2 | S3 |
-| **4** | P3 | IN4 | COM4 / NO4 | M4 | P3 | S4 |
-| **5** | P4 | IN5 | COM5 / NO5 | M5 | P4 | S5 |
-| **6** | P5 | IN6 | COM6 / NO6 | M6 | P5 | S6 |
-| — | P6 / P7 | No usado | — | — | P6 / P7 | No usado |
+| Canal | Motor | Tipo de motor | Relé `0x20` | Contacto | Entrada `0x21` | Estrategia de despacho |
+| :---: | :---: | :--- | :---: | :---: | :---: | :--- |
+| **1** | M1 | LK20052 · 3 hilos | P0 | COM1 / NO1 | P0 · divisor | Sensor · bucle cerrado |
+| **2** | M2 | LK20052 · 3 hilos | P1 | COM2 / NO2 | P1 · divisor | Sensor · bucle cerrado |
+| **3** | M3 | LK20052 · 3 hilos | P2 | COM3 / NO3 | P2 · divisor | Sensor · bucle cerrado |
+| **4** | M4 | LK20052 · 3 hilos | P3 | COM4 / NO4 | P3 · divisor | Sensor · bucle cerrado |
+| **5** | M5 | LK20052 Fy-007 · 2 hilos | P4 | COM5 / NO5 | **Sin conexión** | Tiempo · pulso ~2.0 s |
+| **6** | M6 | LK20052 Fy-007 · 2 hilos | P5 | COM6 / NO6 | **Sin conexión** | Tiempo · pulso ~2.0 s |
+| — | — | — | P6 / P7 | — | P4–P7 | No usado |
 
-*Los puertos P6 y P7 de ambos expansores deben permanecer en nivel alto para no activar cargas ni sensores fantasma.*
+*Los canales M1–M4 leen el reposo en **HIGH ≈ 2.97 V** (`SENSOR_HOME_LEVEL = 1`) a través del divisor 10 kΩ / 3.3 kΩ. Los canales M5–M6 no tienen retroalimentación: P4 y P5 del expansor `0x21` deben quedar físicamente sin conductor y el firmware no los lee. P6 y P7 de ambos expansores permanecen en nivel alto.*
 
 ### 4.7 Distribución de borneras y conectores
 
@@ -494,7 +555,9 @@ El banco está formado por **6 canales de relé con bobina de 12 V**, entradas o
 | Expand the input pin | JST | IO35 / 3.3 V / GND | Salida del PC817 |
 | Salida de relés | Bornera por canal | COM / NO | Motores |
 | Alimentación de bobinas | Bornera 2 pines | 12 V / GND | Módulo de relés |
-| Sensores | Bornera por canal | Pn / GND | Micro-switches |
+| Sensores M1–M4 | Bornera por canal | Señal acondicionada / GND | Divisores 10 kΩ / 3.3 kΩ → P0–P3 de `0x21` |
+| Canales M5–M6 | — | Sin sensor | P4 / P5 de `0x21` sin conexión |
+| Divisores de sensor | 4 pares resistivos | 10 kΩ en serie + 3.3 kΩ a GND | Acondicionamiento 12 V → 2.97 V |
 
 **Figura 11 — Panel TFT ST7796**
 
@@ -529,7 +592,7 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | 5 | `img/optoacoplador_pc817.png` | 3.2 | Aislamiento del monedero |
 | 6 | `img/monedero_ch926.png` | 3.2 | Validador de monedas |
 | 7 | `img/modulo_sensores.png` | 3.3 | Expansor `0x21` |
-| 8 | `img/motor_jgy370.png` | 3.3 | Motor y micro-switch |
+| 8 | `img/motor_lk20052.png` | 3.3 | Motor y micro-switch (M1–M4) |
 | 9 | `img/modulo_reles.png` | 3.4 | Banco de relés `0x20` |
 | 10 | `img/bus_i2c.png` | 3.5 | Bus I2C y pull-ups |
 | 11 | `img/pantalla_st7796.png` | 4.7 | Panel TFT |
@@ -555,9 +618,12 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | 1 | Monedero Joyzan CH-926 | 12 V, salida de pulsos open-collector | Aceptación de monedas |
 | 1 | Módulo optoacoplador HiLetgo | PC817, 2 canales | Aislamiento del pulso |
 | 1 | Resistencia | 10 kΩ, 1/4 W | Pull-up de IO35 |
+| 4 | Resistencia | 10 kΩ, 1/4 W | Rama serie del divisor de M1–M4 |
+| 4 | Resistencia | 3.3 kΩ, 1/4 W | Rama inferior / pull-down del divisor de M1–M4 |
 | 2 | Módulos PCF8574 | I2C, 3.3 V, dirección configurable | Expansión de E/S |
 | 6 | Módulos de relé | 1 canal, bobina 12 V, entrada activa en bajo | Conmutación de motores |
-| 6 | Motores JGY370 / JGA25-370 | 12 V DC con micro-switch trasero | Despacho de producto |
+| 4 | Motores LK20052 | 12 V DC, 3 hilos, con micro-switch trasero | Canales M1–M4 (bucle cerrado) |
+| 2 | Motores LK20052 Fy-007 | 12 V DC, 2 hilos, sin sensor | Canales M5–M6 (lazo abierto) |
 | 6 | Diodos 1N5408 | 3 A / 1000 V | Rueda libre de motores |
 | 6 | Red RC | 100 Ω + 100 nF | Amortiguamiento de contactos |
 | 1 | Fusible | 10 A con portafusible | Protección principal |
@@ -569,8 +635,10 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | :--- | :--- | :--- |
 | Entrada de relé referenciada a 12 V | Sobretensión en PCF8574 y ESP32 | Intercalar optoacoplador o driver ULN2803; usar módulo con entrada compatible con 3.3 V |
 | Pico inductivo del motor | Arco en contactos, reinicio del sistema | Diodo de rueda libre + red RC + desacoplo |
-| Corte de pista incompleto | 12 V sobre el expansor de sensores | Aislamiento físico del switch respecto al riel de 12 V mediante corte de pista |
-| Ruido en cables de sensor | Lecturas falsas de fin de carrera | Par trenzado con GND, pull-up externo, 100 nF |
+| Corte de pista incompleto | 12 V sobre el expansor de sensores | **No aplica:** la placa LK20052 se conserva intacta y la señal se escala con el divisor 10 kΩ / 3.3 kΩ |
+| Polaridad de reposo invertida | Homing o despacho rechazado | Ajustar `SENSOR_HOME_LEVEL` (1 = HIGH, 0 = LOW) sin cambiar el circuito |
+| M5–M6 sin retroalimentación | Producto no entregado o doble entrega | Calibrar el pulso de ~2.0 s con el espiral cargado y mantener 12 V estable |
+| Ruido en cables de sensor | Lecturas falsas de fin de carrera | Par trenzado con GND, capacitor de 100 nF en la entrada y divisor de baja impedancia |
 | Caída de tensión en el mazo de 12 V | Arranque débil del motor | 18 AWG y conexiones atornilladas |
 | Ausencia de paro de emergencia | Riesgo mecánico durante mantenimiento | Añadir interruptor general accesible |
 | Alimentación simultánea por USB y 5 V | Corriente inversa hacia el puerto USB | Diodo de OR en la placa o uso de una sola fuente |
@@ -587,7 +655,10 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | **Rueda libre** | Diodo que recircula la corriente inductiva al desenergizar una carga |
 | **Punto estrella** | Único punto de unión de todos los retornos, atornillado al borne V− / COM de la fuente |
 | **V− / COM** | Terminal negativo de referencia de la fuente de 12 V |
+| **Divisor de tensión** | Red de dos resistencias que escala una tensión; aquí convierte 12 V en ≈ 2.97 V |
+| **Lazo abierto** | Control sin retroalimentación: la acción dura un tiempo calibrado |
+| **SENSOR_HOME_LEVEL** | Macro de firmware que define el nivel lógico de reposo (1 = HIGH, 0 = LOW) |
 
 ---
 
-*Documento de hardware — versión 1.1. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*
+*Documento de hardware — versión 1.2. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*

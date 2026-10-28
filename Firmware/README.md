@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **611 856 B**, 42 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **612 256 B**, 42 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -35,8 +35,8 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 ### Verificaciones antes de energizar
 
 - Alimentar los **PCF8574 a 3.3 V** (no 5 V) para mantener los niveles del bus I2C.
-- Confirmar que los **módulos de relé conmutan de forma fiable con 3.3 V** en su
-  entrada; algunos módulos de 5 V con optoacoplador necesitan un adaptador de nivel.
+- Los **módulos de relé** tienen **bobina de 12 V** y entrada de control optoacoplada; el PCF8574 solo entrega la señal de 3.3 V.
+- Los canales **M1–M4** requieren el divisor **10 kΩ / 3.3 kΩ** en la señal del micro-switch. **M5–M6** no llevan sensor: P4/P5 de `0x21` quedan sin conexión.
 - **Pines confirmados físicamente** (ver `board_config.h`):
   - I2C (PCF8574 0x20/0x21): **SDA=IO32, SCL=IO25**, 100 kHz.
   - TFT ST7796 (SPI2/HSPI): **SCLK=14, MOSI=13, MISO=12, CS=15, DC=2,
@@ -105,7 +105,7 @@ Firmware/
     ├── idf_component.yml   # Dependencias gestionadas (LVGL, ST7796, XPT2046)
     ├── board_config.h      # Mapa de pines y constantes de hardware
     ├── main.c              # app_main: I2C, SD, callback de despacho y 3 tareas
-    ├── motor_control.h/.c  # PCF8574 (0x20 relés / 0x21 sensores), cola, eventos
+    ├── motor_control.h/.c  # PCF8574 (0x20 relés / 0x21 sensores M1-M4), cola, eventos
     ├── coin_acceptor.h/.c  # ISR IO35 y ráfagas 1/3/5/7 pulsos
     └── gui_display.h/.c    # ST7796 + XPT2046 + LVGL, grid 2x3, modal, cobro
 ```
@@ -122,12 +122,16 @@ Firmware/
 
 - **Monedero:** RD$ 1 = 1 pulso, RD$ 5 = 3, RD$ 10 = 5, RD$ 25 = 7. La ISR solo
   encola; la tarea cierra la ráfaga tras 300 ms de silencio y acredita el saldo.
-- **Motores:** relé activo en LOW, sensor de fin de carrera a GND. Secuencia:
-  verificar reposo → energizar → esperar salida de reposo → esperar retorno →
-  apagar siempre → liberar Mutex.
-- ***Homing* al arrancar:** lee los 6 sensores de 0x21 y, si un canal está fuera
-  de reposo, energiza su relé hasta que el sensor marque LOW. Es secuencial, usa
-  `g_dispatch_mutex` y tiene un timeout de seguridad de 10 s por canal.
+- **Motores híbridos:** M1–M4 (LK20052 de 3 hilos) usan micro-switch de fin de
+  carrera acondicionado con un divisor 10 kΩ / 3.3 kΩ; el reposo se lee HIGH
+  (`SENSOR_HOME_LEVEL = 1`). Secuencia: verificar reposo → energizar → esperar
+  salida de reposo → esperar retorno → apagar siempre → liberar Mutex.
+  M5–M6 (LK20052 Fy-007 de 2 hilos) no tienen sensor: se aplica un pulso
+  calibrado de ~2.0 s y se apaga el relé.
+- ***Homing* al arrancar:** solo M1–M4. Lee P0–P3 de `0x21` y, si un canal está
+  fuera de reposo, energiza su relé hasta que el sensor alcance
+  `SENSOR_HOME_LEVEL`. Es secuencial, usa `g_dispatch_mutex` y tiene un timeout
+  de seguridad de 10 s por canal. P4/P5 de `0x21` no se leen.
 - **Eventos de despacho:** `motor_task` emite `MOTOR_EVENT_UNIT_DONE` por cada
   unidad entregada, `MOTOR_EVENT_REQUEST_FAILED` si un motor falla y
   `MOTOR_EVENT_IDLE` al vaciar la cola. `main.c` los adapta a la GUI.
@@ -144,8 +148,9 @@ Firmware/
 - **Cobro diferido (corrección del riesgo #3):** al confirmar, la GUI **solo
   encola** el pedido; no descuenta saldo ni stock. El descuento ocurre en
   `gui_display_on_unit_dispatched()`, únicamente cuando el motor confirma una
-  vuelta con el sensor en LOW. Si un motor falla por timeout, se descarta el
-  resto del pedido y **lo no entregado no se cobra ni reduce stock**.
+  vuelta con el sensor en el nivel de reposo (M1–M4) o completa el pulso
+  temporizado (M5–M6). Si un motor falla por timeout, se descarta el resto del
+  pedido y **lo no entregado no se cobra ni reduce stock**.
 - **Modo administración:** pulsación larga de 3 s en la esquina superior
   izquierda. Panel con scroll de tres secciones: inventario (reset a 10),
   precios (`[-]`/`[+]` en RD$ 5 + guardado en NVS) y prueba de motores

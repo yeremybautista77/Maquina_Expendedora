@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **611 856 B**, 42 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **612 256 B**, 42 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -25,18 +25,37 @@ El monedero emite ráfagas secuenciales que son leídas por el pin **IO35** conf
 *   *Lógica del Firmware:* Una tarea en FreeRTOS abre una "ventana de tiempo" al detectar el primer pulso. Utilizando contadores de tiempo (milisegundos), el sistema espera hasta que pasen ~300ms sin nuevos pulsos para asumir que la ráfaga de la moneda insertada terminó, sumar el valor total y actualizar el saldo en la pantalla.
 
 ## 4. Control de Actuadores y Sensores (Bus I2C)
-Se emplean dos módulos expansores PCF8574 en paralelo al puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND). 
 
-*Seguridad Eléctrica (Contacto Seco):* Para evitar quemar el expansor de sensores (3.3V) con la corriente de los motores (12V), se cortarán físicamente con un bisturí las pistas de cobre de las placas LK20052 en cada motor. Esto aísla el micro-switch, permitiendo que actúe únicamente conectando el pin del expansor `0x21` a Tierra (GND) para señalar la vuelta completa (estado lógico LOW).
+Se emplean dos módulos expansores PCF8574 en paralelo al puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND).
 
-| Canal | Relé de Potencia (Módulo 0x20) | Sensor de Fin de Carrera (Módulo 0x21) |
-| :--- | :--- | :--- |
-| **Producto 1** | Pin P0 | Pin P0 |
-| **Producto 2** | Pin P1 | Pin P1 |
-| **Producto 3** | Pin P2 | Pin P2 |
-| **Producto 4** | Pin P3 | Pin P3 |
-| **Producto 5** | Pin P4 | Pin P4 |
-| **Producto 6** | Pin P5 | Pin P5 |
+### 4.1 Estrategia híbrida de motores
+
+| Grupo | Canales | Modelo | Hilos | Retroalimentación | Control |
+| :--- | :---: | :--- | :---: | :--- | :--- |
+| **M1–M4** | 1–4 | LK20052 | 3 | Micro-switch de fin de carrera | Bucle cerrado por sensor |
+| **M5–M6** | 5–6 | LK20052 Fy-007 | 2 | Ninguna | Lazo abierto por tiempo |
+
+**M1–M4 — acondicionamiento con divisor de tensión.** El micro-switch de estos motores está referenciado a los 12V del propio motor. Para proteger el expansor `0x21` sin cortar pistas ni añadir módulos, cada canal usa un divisor pasivo:
+
+*   **10 kΩ en serie** entre la salida del switch y el puerto Pn del expansor.
+*   **3.3 kΩ entre el puerto Pn y GND**, que actúa además como pull-down.
+
+El divisor entrega **12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) ≈ 2.97 V**, por debajo de los 3.3V del PCF8574 y por encima de su umbral de nivel alto. En reposo el switch cierra y la entrada se lee **HIGH**; cuando el mecanismo gira, el switch abre y la resistencia de 3.3 kΩ lleva la entrada a **LOW**. La placa **LK20052 se mantiene intacta: no se cortan pistas**.
+
+La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con esta topología vale `1` (reposo HIGH); si el cableado invierte la señal, se cambia a `0` sin modificar el circuito.
+
+**M5–M6 — lazo abierto.** Los motores LK20052 Fy-007 son de 2 hilos y no incorporan sensor. El firmware energiza el relé del canal en `0x20` durante un **pulso calibrado de ~2.0 s** y lo desenergiza. Las entradas **P4 y P5 del expansor `0x21` no reciben conexión física** y el firmware no las lee.
+
+### 4.2 Matriz de canales
+
+| Canal | Motor | Relé de Potencia (Módulo 0x20) | Sensor de Fin de Carrera (Módulo 0x21) | Estrategia |
+| :--- | :---: | :--- | :--- | :--- |
+| **Producto 1** | M1 | Pin P0 | Pin P0 (divisor) | Sensor |
+| **Producto 2** | M2 | Pin P1 | Pin P1 (divisor) | Sensor |
+| **Producto 3** | M3 | Pin P2 | Pin P2 (divisor) | Sensor |
+| **Producto 4** | M4 | Pin P3 | Pin P3 (divisor) | Sensor |
+| **Producto 5** | M5 | Pin P4 | **Sin conexión** | Tiempo ~2.0 s |
+| **Producto 6** | M6 | Pin P5 | **Sin conexión** | Tiempo ~2.0 s |
 
 ## 5. Diseño de la Interfaz Gráfica (GUI)
 
@@ -58,7 +77,7 @@ La pantalla se divide visualmente en una cuadrícula (grid) de **2 columnas por 
 
 Para proteger la fuente conmutada de picos de corriente y caídas de tensión (lo que podría reiniciar el ESP32), el firmware usa **dos Mutex con responsabilidades distintas**:
 
-*   **`g_dispatch_mutex` (recurso físico):** garantiza que **solo gire un motor a la vez**. Se toma antes de energizar un relé y se libera al terminar la vuelta o el timeout. Es compartido por el despacho normal y el *homing*.
+*   **`g_dispatch_mutex` (recurso físico):** garantiza que **solo gire un motor a la vez**. Se toma antes de energizar un relé y se libera al terminar la vuelta, el pulso temporizado o el timeout. Es compartido por el despacho normal y el *homing*.
 *   **`s_queue_mutex` (cola de despacho):** serializa la validación de capacidad y el encolado del pedido completo.
 
 El encolado es **todo-o-nada**:
@@ -107,11 +126,12 @@ El modo administración es una herramienta de mantenimiento para el operador. No
 
 Al final de `motor_control_init()` se ejecuta `motor_control_home_all()` **antes** de crear `task_despacho`:
 
-*   Lee el sensor de fin de carrera de cada canal (`PCF8574` en `0x21`).
-*   Si el canal ya está en reposo (sensor en LOW), no hace nada.
-*   Si está fuera de reposo, toma `g_dispatch_mutex`, energiza su relé (`PCF8574` en `0x20`) y espera hasta que el sensor marque LOW o venza el **timeout de 10 s por canal**.
+*   Recorre únicamente los canales **M1–M4**, que son los que tienen sensor (`PCF8574` en `0x21`, pines P0–P3). **P4 y P5 no se leen** porque M5 y M6 no tienen retroalimentación.
+*   Si el canal ya está en reposo (nivel igual a `SENSOR_HOME_LEVEL`, por defecto HIGH), no hace nada.
+*   Si está fuera de reposo, toma `g_dispatch_mutex`, energiza su relé (`PCF8574` en `0x20`) y espera hasta que el sensor alcance el nivel de reposo o venza el **timeout de 10 s por canal**.
 *   El relé se apaga **siempre**, incluso ante timeout o error, y se deja una pausa de asentamiento de 250 ms.
 *   El proceso es **secuencial, canal por canal**: nunca hay dos motores alimentados a la vez. Si un canal no alcanza el reposo, se registra el error y se continúa con el siguiente para no bloquear el arranque.
+*   Los canales **M5–M6** no participan del homing: se despachan en lazo abierto con un pulso de ~2.0 s cuando se solicita una unidad.
 
 ## 10. Escalabilidad (Hardware V2.0)
 

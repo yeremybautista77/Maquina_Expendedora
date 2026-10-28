@@ -9,7 +9,7 @@ Nombres esperados (ver índice de figuras, sección 5.1):
 - optoacoplador_pc817.png
 - monedero_ch926.png
 - modulo_sensores.png
-- motor_jgy370.png
+- motor_lk20052.png
 - modulo_reles.png
 - bus_i2c.png
 - pantalla_st7796.png
