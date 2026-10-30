@@ -18,8 +18,9 @@
  *   |  ...                      |
  *   +---------------------------+
  *   |  Saldo: RD$ XX.00         |
- *   |  Monto a Pagar: RD$ XX.00 |  Panel inferior
- *   |  Seleccione productos     |  [ Confirmar ]
+ *   |  Monto a Pagar:           |  Panel inferior
+ *   |  RD$ XX.00                |
+ *   |  Seleccione productos     |  Confirmar
  *   +---------------------------+
  *
  *   Al confirmar se muestra un modal con el resumen y [Si] / [No].

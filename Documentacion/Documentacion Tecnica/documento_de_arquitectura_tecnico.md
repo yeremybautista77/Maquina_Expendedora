@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **612 256 B**, 42 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **612 080 B**, 42 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -69,7 +69,7 @@ La pantalla se divide visualmente en una cuadrícula (grid) de **2 columnas por 
 *   **Panel Inferior (80 px):**
     *   `Saldo: RD$ XX.00`, reactivo a las monedas insertadas.
     *   `Monto a Pagar: RD$ XX.00`, calculado como Σ(cantidad × precio).
-    *   Botón `[ Confirmar ]`. Al accionarlo aparece un modal con el resumen y la pregunta *"¿Confirmar compra? [Sí] [No]"*.
+    *   Botón `Confirmar`. Al accionarlo aparece un modal con el resumen y la pregunta *"¿Confirmar compra? [Sí] [No]"*.
     *   Avisos breves (*toast*) para errores de saldo, stock, cola llena o resultado del despacho.
 *   **Concurrencia:** `s_state_mutex` protege saldo, stock, precios, cantidades, modal y pedido. `task_monedero` y `task_despacho` solo mutan estado protegido y despiertan a `task_gui`; **todas** las llamadas a LVGL ocurren en `task_gui`.
 

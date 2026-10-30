@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **612 256 B**, 42 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **612 080 B**, 42 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -138,7 +138,7 @@ Firmware/
 - **GUI:** grid estricto 2×3 (≈83 % superior) con cabecera
   `Producto N\nRD$ XX.00`, recuadro de imagen o `[Espacio Imagen]`, y
   `[-] Cant: N [+]`. Panel inferior fijo (≈17 %) con `Saldo:`, `Monto a Pagar:`
-  reactivo y botón grande `[ Confirmar ]`; modal `[Sí] [No]` y toast.
+  reactivo y botón grande `Confirmar`; modal `[Sí] [No]` y toast.
   El estado (saldo, stock, cantidades, pedido) está protegido por un Mutex y
   **todas** las llamadas a LVGL ocurren en `task_gui`.
 - **Persistencia NVS:** `nvs_flash_init()` en `main.c`; saldo, stock y precios de
@@ -158,7 +158,8 @@ Firmware/
 
 ## Pendiente (iterativo)
 
-1. Calibrar el táctil en la placa real
-   (`BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`, `TODO_CALIBRAR`).
+1. Validar en placa el monedero, los módulos I2C/motores y el modo
+   administración completo (precios y tests de motor). El táctil ya está
+   calibrado (`BOARD_TOUCH_MIRROR_X = 0`, `MIRROR_Y = 1`).
 2. Validar en placa el modo administración completo (precios y tests de motor).
 3. Telemetría Wi-Fi y audio (V2.0).

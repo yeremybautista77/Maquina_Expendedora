@@ -128,11 +128,18 @@ extern "C" {
 #define BOARD_TFT_BL_LEDC_FREQ_HZ       5000
 #define BOARD_TFT_BL_DUTY_ON            1023
 
-/* Ajustes de orientacion/color del panel (vertical, BGR e inversion confirmados). */
+/* Ajustes de orientacion/color del panel. El ST7796 de esta placa NO necesita
+ * inversion: con BOARD_TFT_INVERT_COLOR = 1 el tema oscuro se veia claro y los
+ * colores se invertian (verde -> rosado, rojo -> cian). */
 #define BOARD_TFT_USE_BGR_ORDER         1
-#define BOARD_TFT_INVERT_COLOR          1
+#define BOARD_TFT_INVERT_COLOR          0
 #define BOARD_TFT_SWAP_XY               0
-#define BOARD_TFT_MIRROR_X              0
+/* El panel entrega la imagen reflejada en X con MADCTL por defecto: se corrige
+ * aqui. El tactil, en cambio, entrega las coordenadas rotadas 180 grados
+ * respecto a la pantalla ya enderezada; por eso se invierten ambos ejes
+ * (mirror_x = 0, mirror_y = 1). Si en otro montaje el tactil queda espejado,
+ * basta alternar estos dos valores. */
+#define BOARD_TFT_MIRROR_X              1
 #define BOARD_TFT_MIRROR_Y              0
 
 /* ==========================================================================
@@ -147,10 +154,10 @@ extern "C" {
 #define BOARD_TOUCH_PIN_IRQ             GPIO_NUM_NC   /* Confirmado: sin IRQ, sondeo */
 #define BOARD_TOUCH_SPI_CLOCK_HZ        (1 * 1000 * 1000)
 
-/* Ajustes de calibracion del tactil. TODO_CALIBRAR con la pantalla real. */
+/* Ajustes de calibracion del tactil (confirmados en la placa real). */
 #define BOARD_TOUCH_SWAP_XY             0
-#define BOARD_TOUCH_MIRROR_X            1
-#define BOARD_TOUCH_MIRROR_Y            0
+#define BOARD_TOUCH_MIRROR_X            0
+#define BOARD_TOUCH_MIRROR_Y            1
 
 #ifdef __cplusplus
 }

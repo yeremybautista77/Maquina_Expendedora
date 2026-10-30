@@ -4,19 +4,21 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-10-28
+> **Última actualización:** 2026-10-30
 > **Estado global:** **fase P1 de software completada y modo administración
 > ampliado** (inventario, precios mutables en NVS y prueba de motores) y se
 > sube a GitHub al cierre de esta sesión. Pines confirmados, estrategia híbrida
 > de motores, *homing* de M1–M4, NVS, layout Flex 2×3 y cobro diferido por
 > unidad implementados; compila sin errores ni warnings
-> (`maquina_expendedora.bin` = **612 256 B**, 42 % libre).
-> **El flasheo sigue pendiente**: no hay placa conectada ni puerto COM. Queda la
-> validación en hardware (táctil, colores, homing, NVS, cola llena y modo admin).
+> (`maquina_expendedora.bin` = **612 080 B**, 42 % libre).
+> **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
+> XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
+> corregidos (sin inversión). Pendiente: monedero, módulos I2C/motores,
+> *homing*, NVS y modo administración en la placa real.
 
 ### Resumen rápido: qué está hecho y qué falta
 
-**Hecho y verificado (compila):**
+**Hecho y verificado (compila y pantalla validada):**
 
 - [x] Monedero por ISR en IO35 con ventana de ráfaga y antirrebote.
 - [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). M1–M4 con sensor; M5–M6 por tiempo.
@@ -39,14 +41,15 @@
 - [x] Persistencia en NVS de saldo, stock y precios (carga al arrancar; guardado
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
-      `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `[ Confirmar ]`.
-- [x] Build limpio (**612 256 B**, 42 % libre) y `Firmware/` versionado.
+      `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
+- [x] Build limpio (**612 080 B**, 42 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
-1. **Validar en la placa real**: conectar la placa, flashear y probar táctil
-   (calibración), layout 2×3, colores/orientación, homing, NVS, rechazo por
-   cola llena y modo administración completo (precios y tests de motor).
+1. **Validar el resto de la placa real**: conectar monedero y módulos I2C/motores;
+   probar *homing*, NVS, rechazo por cola llena y modo administración completo
+   (precios y tests de motor). La pantalla, el táctil y los colores ya están
+   validados.
 2. Pruebas automatizadas y CI (transversal).
 3. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
 4. Ampliar el modo administración con historial de ventas/recaudación y
@@ -56,7 +59,7 @@
 
 - [x] Expansión del modo administración: inventario, precios mutables en NVS y
       prueba de motores con marca `admin_test`.
-- [x] Build limpio sin warnings → **612 256 B** (`0x957a0`), 42 % libre.
+- [x] Build limpio sin warnings → **612 080 B** (`0x956f0`), 42 % libre.
 - [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
       presente (placa desconectada o cable solo de carga).
 
@@ -125,7 +128,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
    al **48 %** de ancho (fuerza el salto de línea tras cada pareja), cabecera
    `Producto N\nRD$ XX.00`, recuadro `[Espacio Imagen]`, `[-] Cant: N [+]`;
    panel inferior de **80 px** con `Saldo:`, `Monto a Pagar:` reactivo y
-   `[ Confirmar ]` grande.
+   `Confirmar` grande.
 5. **Precios**: tabla compilada `k_product_prices` = **RD$ 40/50/60/70/80/90**;
    eliminado `GUI_USE_DEMO_PRICES`.
 6. **Build**: `maquina_expendedora.bin` = **592 512 B** (`0x90a80`), **43 %
@@ -164,7 +167,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
    abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
    el aviso `Espere a que termine el despacho` si hay una compra en curso.
-5. **Build:** **612 256 B** (`0x957a0`), **42 % libre**, sin warnings.
+5. **Build:** **612 080 B** (`0x956f0`), **42 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -179,14 +182,14 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Despacho I2C + Mutex | ✅ Implementado | Validar con motores reales |
 | *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
 | Persistencia NVS | ✅ Implementado | Probar apagón/reinicio real |
-| GUI 2×3 + panel inferior | ✅ Implementado | Calibrar táctil y colores |
+| GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
 | Encolado atómico | ✅ Implementado | Probar rechazo con la cola llena en placa |
 | Modo administración | ✅ Implementado | Panel completo: inventario, precios y test de motores |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
 | Push a GitHub | ✅ Hecho | `origin/main` incluye la expansión del modo administración |
-| Flasheo + monitor | ⏳ Pendiente | Sin puerto COM: conectar la placa |
+| Flasheo + monitor | ✅ Hecho | COM5, ESP32-D0WD-V3, GUI validada |
 
 ---
 
@@ -295,10 +298,10 @@ Pines **confirmados físicamente** en la ESP32-32E 4.0"
 
 - El táctil se lee por **polling** (`BOARD_TOUCH_PIN_IRQ = GPIO_NUM_NC`) para no
   registrar una IRQ sin manejador.
-- Calibración pendiente: `BOARD_TOUCH_SWAP_XY`, `MIRROR_X`, `MIRROR_Y`
-  (`TODO_CALIBRAR`). Si el eje X/Y sale invertido, cambiar solo esas macros.
+- Calibración validada en placa: `BOARD_TOUCH_MIRROR_X = 0`,
+  `BOARD_TOUCH_MIRROR_Y = 1` (compensa la rotación de 180° del XPT2046).
 - El panel se crea con `esp_lcd_new_panel_io_spi()` + `esp_lcd_new_panel_st7796()`,
-  con orden **BGR** e inversión de color activados (verificables en hardware).
+  con orden **BGR** y **sin inversión de color** (`BOARD_TFT_INVERT_COLOR = 0`).
 
 ---
 
@@ -502,7 +505,7 @@ Orden de arranque en `app_main()`:
     `[-]`, `Cant: N` y `[+]` (botones de 34×34 px).
   - Panel inferior fijo de 80 px (17 %) con Flex en fila:
     `Saldo: RD$ 0.00`, `Monto a Pagar: RD$ 0.00` (reactivo) y botón
-    `[ Confirmar ]` de 118×64 px.
+    `Confirmar` de 118×64 px.
 - Reglas implementadas:
   - Cantidad entre 0 y `min(stock, 10)`.
   - `[-]`/`[+]` ajustan y recortan contra stock.
@@ -591,8 +594,8 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
   - Layout 2×3 con Flex `ROW_WRAP`, botones `[-] [+]`, contador `Cant: N`,
     panel con saldo, monto a pagar y modal `Confirmar compra [Sí] [No]`.
   - `lv_timer_handler()` + `lv_tick_inc()` en `task_gui`.
-  - *Criterio:* se puede seleccionar producto y confirmar solo con el dedo
-    (pendiente de calibrar el táctil en la placa real).
+  - *Criterio:* se puede seleccionar producto y confirmar solo con el dedo;
+    calibración validada en la placa real (M1–M6).
 
 - [x] **Concurrencia de la GUI**
   - `s_state_mutex` protege saldo, stock, cantidades, modal y pedido.
@@ -616,10 +619,12 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
     persistencia NVS tras reinicio.
   - *Criterio:* se completa el checklist de §8 sin fallos.
 
-- [ ] **Calibrar el táctil**
-  - Ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y` y
-    `BOARD_TFT_USE_BGR_ORDER/INVERT_COLOR` con la pantalla real.
-  - Los pines ya están confirmados; solo falta la calibración fina.
+- [x] **Calibrar el táctil y los colores**
+  - `BOARD_TFT_MIRROR_X = 1` y `BOARD_TFT_INVERT_COLOR = 0`.
+  - `BOARD_TOUCH_MIRROR_X = 0` y `BOARD_TOUCH_MIRROR_Y = 1` para compensar la
+    rotación de 180° que entrega el XPT2046 en esta placa.
+  - Validado en placa: cada `+`/`−` afecta su propio canal y los colores
+    verde/rojo se muestran correctamente.
 
 ### P1 — Robustez y consistencia
 

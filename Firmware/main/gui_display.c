@@ -856,11 +856,11 @@ static void create_bottom_panel(void)
     lv_obj_set_style_text_font(s_balance_label, &lv_font_montserrat_14, 0);
 
     s_total_label = lv_label_create(info);
-    lv_label_set_text(s_total_label, "Monto a Pagar: RD$ 0.00");
-    lv_label_set_long_mode(s_total_label, LV_LABEL_LONG_DOT);
+    lv_label_set_text(s_total_label, "Monto a Pagar:\nRD$ 0.00");
+    lv_label_set_long_mode(s_total_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_total_label, LV_PCT(100));
-    lv_obj_set_style_text_color(s_total_label, lv_color_hex(0xF1C40F), 0);
-    lv_obj_set_style_text_font(s_total_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_total_label, lv_color_hex(0xE74C3C), 0);
+    lv_obj_set_style_text_font(s_total_label, &lv_font_montserrat_12, 0);
 
     s_status_label = lv_label_create(info);
     lv_label_set_text(s_status_label, "Seleccione productos");
@@ -872,13 +872,15 @@ static void create_bottom_panel(void)
     s_confirm_btn = lv_btn_create(s_bottom_panel);
     lv_obj_set_size(s_confirm_btn, 118, 64);
     lv_obj_set_style_radius(s_confirm_btn, 10, 0);
-    lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x2980B9), 0);
+    lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x27AE60), 0);
+    lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x1E8449),
+                              LV_STATE_PRESSED);
     lv_obj_add_event_cb(s_confirm_btn, on_confirm_clicked, LV_EVENT_CLICKED,
                         NULL);
-    lv_obj_add_state(s_confirm_btn, LV_STATE_DISABLED);
 
     lv_obj_t *confirm_label = lv_label_create(s_confirm_btn);
-    lv_label_set_text(confirm_label, "[ Confirmar ]");
+    lv_label_set_text(confirm_label, "Confirmar");
+    lv_obj_set_style_text_color(confirm_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(confirm_label, &lv_font_montserrat_14, 0);
     lv_obj_center(confirm_label);
 }
@@ -1664,7 +1666,7 @@ static void gui_refresh_ui(void)
                           (long long)(snapshot.balance_cents / 100),
                           (long long)(snapshot.balance_cents % 100));
 
-    lv_label_set_text_fmt(s_total_label, "Monto a Pagar: RD$ %lld.%02lld",
+    lv_label_set_text_fmt(s_total_label, "Monto a Pagar:\nRD$ %lld.%02lld",
                           (long long)(selected_total_cents / 100),
                           (long long)(selected_total_cents % 100));
 
@@ -1676,16 +1678,14 @@ static void gui_refresh_ui(void)
     } else if (selected_units == 0) {
         lv_label_set_text(s_status_label, "Seleccione productos");
     } else {
-        lv_label_set_text(s_status_label, "Pulse [ Confirmar ]");
+        lv_label_set_text(s_status_label, "Pulse Confirmar");
     }
 
-    const bool can_confirm =
-        !snapshot.order_active && !snapshot.modal_open && selected_units > 0;
-    if (can_confirm) {
-        lv_obj_clear_state(s_confirm_btn, LV_STATE_DISABLED);
-    } else {
-        lv_obj_add_state(s_confirm_btn, LV_STATE_DISABLED);
-    }
+    /*
+     * El boton Confirmar permanece siempre verde y habilitado: la validacion
+     * real (sin productos, saldo insuficiente o despacho en curso) se hace en
+     * gui_display_show_confirm_modal() con un aviso claro al usuario.
+     */
 
     /*
      * Panel de administracion abierto: refrescar stock y habilitar/deshabilitar
@@ -2222,6 +2222,10 @@ esp_err_t gui_display_adjust_quantity(uint8_t index, int delta)
         s_products[index].quantity = (uint8_t)quantity;
         s_ui_dirty = true;
     }
+
+    ESP_LOGI(TAG, "Toque M%u: %+d -> Cant: %u",
+             (unsigned)(index + 1), delta,
+             (unsigned)s_products[index].quantity);
 
     state_unlock();
     ui_notify();

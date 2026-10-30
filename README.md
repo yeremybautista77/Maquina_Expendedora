@@ -29,7 +29,7 @@ El funcionamiento es el siguiente:
 - Validación en hardware real: táctil/calibración, motores, persistencia NVS tras reinicio y modo administración.
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
 
-**Build de referencia:** `maquina_expendedora.bin` = **612 256 B** (42 % de la partición de aplicación libre).
+**Build de referencia:** `maquina_expendedora.bin` = **612 080 B** (42 % de la partición de aplicación libre).
 
 ---
 
