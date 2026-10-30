@@ -453,8 +453,8 @@ Orden de arranque en `app_main()`:
   - Solo cuenta pulsos de **10–150 ms** de ancho; los glitches de EMI duran
     microsegundos y una línea pegada en LOW dura demasiado.
   - El monedero se **arma** solo cuando la línea lleva **500 ms** en reposo
-    (HIGH). Si la línea se queda en el nivel activo, se **desarma** y vuelve a
-    exigir reposo estable.
+    (HIGH). Si la línea se queda en el nivel activo más de **1 s**, se
+    **desarma** y vuelve a exigir reposo estable.
   - Al cerrar la ráfaga la línea debe haber vuelto al reposo; si no, se descarta.
   - El log avisa al arrancar si IO35 no está en reposo:
     `La linea arranco en nivel activo: revise el pull-up externo...`

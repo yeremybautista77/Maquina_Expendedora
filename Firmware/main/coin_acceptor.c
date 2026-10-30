@@ -302,7 +302,7 @@ void coin_acceptor_task(void *arg)
             }
         } else if (active &&
                    (now_us - active_since_us) >
-                       (int64_t)(COIN_PULSE_MAX_WIDTH_MS + 100) * 1000) {
+                       (int64_t)COIN_DISARM_AFTER_MS * 1000) {
             /* La linea se quedo en el nivel activo: no hay monedero confiable. */
             s_armed = false;
             idle_since_us = now_us;

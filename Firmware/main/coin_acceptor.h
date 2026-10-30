@@ -74,11 +74,17 @@ extern "C" {
 /**
  * Reposo estable (ms) que debe mostrar la linea antes de que el firmware
  * empiece a aceptar monedas. Con el monedero desconectado, IO35 queda flotante:
- * exigir este reposo evita que el ruido se acredite como saldo. Si la linea se
- * queda en el nivel activo mas de COIN_PULSE_MAX_WIDTH_MS + 100 ms, el monedero
- * se desarma y debe volver a estabilizarse.
+ * exigir este reposo evita que el ruido se acredite como saldo.
  */
 #define COIN_ARM_STABLE_MS          500
+
+/**
+ * Tiempo (ms) que la linea puede permanecer en el nivel activo antes de
+ * considerar que el monedero se desconecto o quedo pegado en LOW. Se usa un
+ * margen amplio (1 s) para no desarmar el monedero si una moneda tarda en
+ * pasar por el mecanismo.
+ */
+#define COIN_DISARM_AFTER_MS        1000
 
 /**
  * @brief Callback invocado al cerrar una rafaga de pulsos.
