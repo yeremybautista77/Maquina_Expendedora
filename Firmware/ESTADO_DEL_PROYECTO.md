@@ -10,7 +10,7 @@
 > sube a GitHub al cierre de esta sesión. Pines confirmados, estrategia híbrida
 > de motores, *homing* de M1–M4, NVS, layout Flex 2×3 y cobro diferido por
 > unidad implementados; compila sin errores ni warnings
-> (`maquina_expendedora.bin` = **612 080 B**, 42 % libre).
+> (`maquina_expendedora.bin` = **613 472 B**, 41 % libre).
 > **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
 > XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
 > corregidos (sin inversión). Pendiente: monedero, módulos I2C/motores,
@@ -21,6 +21,8 @@
 **Hecho y verificado (compila y pantalla validada):**
 
 - [x] Monedero por ISR en IO35 con ventana de ráfaga y antirrebote.
+- [x] Filtro anti-saldo-fantasma en IO35: gracia de arranque, ancho de pulso
+      válido y armado solo con la línea en reposo estable (ver §5.2).
 - [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). M1–M4 con sensor; M5–M6 por tiempo.
 - [x] Eventos de despacho (`UNIT_DONE` / `REQUEST_FAILED` / `IDLE`) y descarte
       de la cola ante fallo.
@@ -42,7 +44,7 @@
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**612 080 B**, 42 % libre) y `Firmware/` versionado.
+- [x] Build limpio (**613 472 B**, 41 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -59,7 +61,7 @@
 
 - [x] Expansión del modo administración: inventario, precios mutables en NVS y
       prueba de motores con marca `admin_test`.
-- [x] Build limpio sin warnings → **612 080 B** (`0x956f0`), 42 % libre.
+- [x] Build limpio sin warnings → **613 472 B** (`0x95c60`), 41 % libre.
 - [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
       presente (placa desconectada o cable solo de carga).
 
@@ -167,7 +169,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
    abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
    el aviso `Espere a que termine el despacho` si hay una compra en curso.
-5. **Build:** **612 080 B** (`0x956f0`), **42 % libre**, sin warnings.
+5. **Build:** **613 472 B** (`0x95c60`), **41 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -178,7 +180,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Bloque | Estado | Qué falta / riesgo |
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
-| Monedero (ISR IO35) | ✅ Implementado | Validar valores reales en placa |
+| Monedero (ISR IO35) | ✅ Implementado | Filtro anti-fantasma probado sin monedero; falta validar monedas reales |
 | Despacho I2C + Mutex | ✅ Implementado | Validar con motores reales |
 | *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
 | Persistencia NVS | ✅ Implementado | Probar apagón/reinicio real |
@@ -435,7 +437,8 @@ Orden de arranque en `app_main()`:
 
 ### 5.2 `coin_acceptor` — monedero
 
-- GPIO35 configurado como entrada con ISR por **flanco de bajada**.
+- GPIO35 configurado como entrada con ISR por **ambos flancos** (se mide el ancho
+  del pulso).
 - La ISR **solo cuenta pulsos** y los envía a una cola (no hace trabajo pesado).
 - `coin_acceptor_task()` implementa la ventana de 300 ms: cada pulso reinicia el
   temporizador; al cerrar la ráfaga valida y llama al callback con
@@ -443,6 +446,18 @@ Orden de arranque en `app_main()`:
 - `coin_acceptor_pulses_to_cents()` mapea 1/3/5/7 → 100/500/1000/2500; cualquier
   otra cantidad devuelve 0.
 - Antirrebote de 20 ms por pulso.
+- **Protección contra saldo fantasma** (IO35 flotante si el monedero no está
+  conectado o falta el pull-up de 10 kΩ):
+  - Ventana de gracia de **2500 ms** tras el arranque: los transitorios de
+    encendido no se acreditan.
+  - Solo cuenta pulsos de **10–150 ms** de ancho; los glitches de EMI duran
+    microsegundos y una línea pegada en LOW dura demasiado.
+  - El monedero se **arma** solo cuando la línea lleva **500 ms** en reposo
+    (HIGH). Si la línea se queda en el nivel activo, se **desarma** y vuelve a
+    exigir reposo estable.
+  - Al cerrar la ráfaga la línea debe haber vuelto al reposo; si no, se descarta.
+  - El log avisa al arrancar si IO35 no está en reposo:
+    `La linea arranco en nivel activo: revise el pull-up externo...`
 
 ### 5.3 `motor_control` — despacho
 

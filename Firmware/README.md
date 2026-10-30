@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **612 080 B**, 42 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **613 472 B**, 41 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -31,6 +31,13 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 > **Nota de hardware:** GPIO35 es *input-only* y no tiene pull-up interno. Es
 > obligatorio un pull-up externo de 10 kΩ a 3.3 V en la salida del PC817, y el
 > firmware **no debe habilitar el pull-up por software**.
+>
+> **Sin monedero conectado IO35 queda flotante** y puede leer LOW. Por eso el
+> firmware no acredita nada hasta que la línea lleva 500 ms en reposo, descarta
+> pulsos fuera de 10–150 ms y muestra en el log:
+> `La linea arranco en nivel activo: revise el pull-up externo...`.
+> Si aparece ese aviso, el monedero **no está armado** y no aceptará monedas
+> hasta corregir el pull-up y reiniciar.
 
 ### Verificaciones antes de energizar
 
@@ -77,6 +84,7 @@ LVGL los abre como `S:/productos/pN.bmp` (FS stdio con letra `S` y raíz
 .\compilar.ps1 -Clean                       # build limpio
 .\compilar.ps1 -Flash -Port COM3            # build + flash
 .\compilar.ps1 -Flash -Port COM3 -Monitor   # build + flash + monitor
+.\compilar.ps1 -Flash -Port COM5 -Erase     # borra NVS (saldo/stock) y flashea
 ```
 
 Salir del monitor: `Ctrl + ]`.

@@ -16,6 +16,17 @@
  *   pasan 300 ms sin actividad se cierra la rafaga, se valida la cantidad de
  *   pulsos y se informa el valor mediante el callback registrado.
  *
+ *   Robustez contra saldo fantasma:
+ *   - Se ignoran los pulsos de los primeros COIN_STARTUP_IGNORE_MS tras el
+ *     arranque (transitorios de encendido).
+ *   - Solo cuenta un pulso cuyo ancho este entre COIN_PULSE_MIN_WIDTH_MS y
+ *     COIN_PULSE_MAX_WIDTH_MS; asi se descartan glitches de EMI y una linea
+ *     flotante (monedero sin conectar).
+ *   - Al cerrar la rafaga la linea debe estar en reposo (HIGH); si sigue en
+ *     LOW la rafaga se descarta.
+ *   - El monedero solo se arma cuando la linea lleva COIN_ARM_STABLE_MS en
+ *     reposo estable; si se queda en nivel activo se desarma.
+ *
  * SPDX-License-Identifier: MIT
  */
 
@@ -40,6 +51,34 @@ extern "C" {
 
 /** Antirrebote por pulso (ms). */
 #define COIN_PULSE_DEBOUNCE_MS      20
+
+/**
+ * Tiempo (ms) tras coin_acceptor_init() durante el cual se descartan todos los
+ * pulsos. Al conectar/desconectar la alimentacion (USB o fuente) la linea del
+ * optoacoplador se comporta como una antena y genera flancos falsos; esa ventana
+ * evita que se acredite saldo fantasma en cada arranque.
+ */
+#define COIN_STARTUP_IGNORE_MS      2500
+
+/**
+ * Ancho valido de un pulso del monedero (ms).
+ *
+ * El optoacoplador PC817 entrega un pulso de decenas de milisegundos. Un glitch
+ * de EMI dura microsegundos y una linea flotante (monedero sin conectar) se
+ * queda en LOW demasiado tiempo: ambos casos se descartan. Ajustar solo si el
+ * monedero real entrega anchos distintos.
+ */
+#define COIN_PULSE_MIN_WIDTH_MS     10
+#define COIN_PULSE_MAX_WIDTH_MS     150
+
+/**
+ * Reposo estable (ms) que debe mostrar la linea antes de que el firmware
+ * empiece a aceptar monedas. Con el monedero desconectado, IO35 queda flotante:
+ * exigir este reposo evita que el ruido se acredite como saldo. Si la linea se
+ * queda en el nivel activo mas de COIN_PULSE_MAX_WIDTH_MS + 100 ms, el monedero
+ * se desarma y debe volver a estabilizarse.
+ */
+#define COIN_ARM_STABLE_MS          500
 
 /**
  * @brief Callback invocado al cerrar una rafaga de pulsos.

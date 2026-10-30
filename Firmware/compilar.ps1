@@ -14,6 +14,7 @@
     .\compilar.ps1 -Clean
     .\compilar.ps1 -Flash -Port COM3
     .\compilar.ps1 -Flash -Port COM3 -Monitor
+    .\compilar.ps1 -Flash -Port COM5 -Erase   # borra NVS (saldo/stock) y flashea
 #>
 param(
     [string]$IdfPath      = "C:\Users\asus\esp\esp-idf",
@@ -22,6 +23,7 @@ param(
     [string]$WorkDir      = "C:\Users\asus\esp\maquina_expendedora",
     [string]$BuildDir     = "C:\Users\asus\esp\build_maquina",
     [switch]$Clean,
+    [switch]$Erase,
     [switch]$Flash,
     [string]$Port = "",
     [switch]$Monitor
@@ -54,6 +56,7 @@ $env:Path = "$PythonPath;$PythonPath\Scripts;" + $env:Path
 $idfArgs = "idf.py -B `"$BuildDir`""
 if ($Port) { $idfArgs += " -p $Port" }
 $idfArgs += " build"
+if ($Erase)   { $idfArgs += " erase-flash" }
 if ($Flash)   { $idfArgs += " flash" }
 if ($Monitor) { $idfArgs += " monitor" }
 

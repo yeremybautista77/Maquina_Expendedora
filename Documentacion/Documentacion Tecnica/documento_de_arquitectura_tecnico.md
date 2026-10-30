@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **612 080 B**, 42 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **613 472 B**, 41 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -23,6 +23,7 @@ El monedero emite ráfagas secuenciales que son leídas por el pin **IO35** conf
 *   **RD$ 10** = 5 pulsos
 *   **RD$ 25** = 7 pulsos
 *   *Lógica del Firmware:* Una tarea en FreeRTOS abre una "ventana de tiempo" al detectar el primer pulso. Utilizando contadores de tiempo (milisegundos), el sistema espera hasta que pasen ~300ms sin nuevos pulsos para asumir que la ráfaga de la moneda insertada terminó, sumar el valor total y actualizar el saldo en la pantalla.
+*   *Protección contra saldo fantasma:* IO35 no tiene pull-up interno y, si el monedero no está conectado, la línea flota. El firmware solo **arma** el monedero cuando la línea lleva 500 ms en reposo (HIGH), descarta pulsos de ancho fuera de 10–150 ms y ignora los primeros 2.5 s tras el arranque. Si la línea se queda en nivel activo, el monedero se desarma y el log pide revisar el pull-up externo de 10 kΩ a 3.3 V.
 
 ## 4. Control de Actuadores y Sensores (Bus I2C)
 
