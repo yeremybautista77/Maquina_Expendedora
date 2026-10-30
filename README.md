@@ -23,13 +23,13 @@ El funcionamiento es el siguiente:
 - *Homing* automático al arrancar solo para M1–M4 (10 s por canal) y encolado atómico todo-o-nada.
 - Cobro diferido: el saldo y el stock solo se descuentan cuando el motor confirma la unidad.
 - Persistencia en NVS de saldo, stock y precios.
-- Modo administración oculto para inventario, precios y prueba de motores.
+- Modo administración por botón `ADM` + contraseña (`0000`): ajuste de saldo, inventario y precios.
 
 **Pendiente:**
 - Validación en hardware real: táctil/calibración, motores, persistencia NVS tras reinicio y modo administración.
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
 
-**Build de referencia:** `maquina_expendedora.bin` = **613 872 B** (41 % de la partición de aplicación libre).
+**Build de referencia:** `maquina_expendedora.bin` = **616 224 B** (41 % de la partición de aplicación libre).
 
 ---
 
@@ -78,16 +78,17 @@ El funcionamiento es el siguiente:
 
 ## 🔐 Modo Administración (operador)
 
-El panel está oculto para el usuario final y se usa para mantenimiento de la máquina.
+El panel está protegido con contraseña y se usa para mantenimiento de la máquina.
 
-1. **Acceso:** mantén pulsada la **esquina superior izquierda** de la pantalla durante **3 segundos**.
-2. Se abre un panel con scroll y tres secciones:
+1. **Acceso:** pulsa el botón pequeño **`ADM`** que está junto a `Confirmar`, en el panel inferior.
+2. Introduce la contraseña **`0000`** en el teclado numérico. Al teclear el cuarto dígito se valida sola; `C` borra y `OK` reintenta el envío.
+3. Se abre un panel con scroll y tres secciones:
+   - **Saldo:** muestra el saldo actual y permite subirlo o bajarlo con `+1/+5/+10/+25` y `-1/-5/-10/-25`. Cada cambio se guarda en NVS al instante.
    - **Inventario:** muestra el stock de los 6 canales y el botón `Rellenar Stock (Reset a 10)`.
    - **Precios:** cada producto tiene `[-]`/`[+]` en pasos de **RD$ 5**. Pulsa `Guardar Precios` para aplicar los cambios y persistirlos en NVS. Rango válido: RD$ 5.00–1000.00.
-   - **Prueba de motores:** `Test M1`…`Test M6` despachan una unidad para comprobar el motor. La prueba **solo descuenta stock**; no cobra saldo ni altera el pedido del usuario.
-3. Cierra el panel con el botón **X**.
+4. Cierra el panel con el botón **X**.
 
-**Seguridad:** el reset y las pruebas se bloquean mientras hay una compra activa o el motor/cola está ocupado. Los tests no modifican el saldo ni el flujo de venta.
+**Seguridad:** el acceso, el ajuste de saldo, el reset y el guardado de precios se bloquean mientras hay una compra activa. La contraseña es provisional y se valida en el firmware.
 
 ---
 

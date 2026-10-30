@@ -101,14 +101,23 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Timeout para tomar el Mutex de estado (no debe bloquear a motor_task). */
 #define GUI_STATE_LOCK_TIMEOUT_MS   100
 
-/**
- * Duracion de la pulsacion larga que abre el modo administracion.
- * Se configura en el driver de entrada (LVGL 8.4).
- */
-#define GUI_ADMIN_LONG_PRESS_MS     3000
+/* --- Modo administracion -------------------------------------------------- */
 
-/** Lado del boton invisible de la esquina superior izquierda. */
-#define GUI_ADMIN_HOTSPOT_SIZE      40
+/**
+ * Contrasena de acceso al modo administracion. Es provisional: mientras el
+ * proyecto no tenga usuarios ni almacenamiento seguro, se valida en el propio
+ * firmware y no se persiste en NVS.
+ */
+#define GUI_ADMIN_PASSWORD          "0000"
+
+/** Longitud exacta de la contrasena del modo administracion. */
+#define GUI_ADMIN_PASSWORD_LEN      4
+
+/** Cantidad de pasos de ajuste manual de saldo (+/- RD$ 1/5/10/25). */
+#define GUI_ADMIN_BALANCE_STEPS     4
+
+/** Saldo maximo que acepta el ajuste manual (RD$ 10 000.00). */
+#define GUI_ADMIN_BALANCE_MAX_CENTS 1000000LL
 
 /* --- Persistencia (NVS) --------------------------------------------------- */
 
@@ -272,23 +281,31 @@ static lv_obj_t *s_toast_label = NULL;
 static lv_timer_t *s_toast_timer = NULL;
 
 /*
- * Modo administracion: boton invisible en la esquina superior izquierda que se
- * activa con una pulsacion larga de 3 s. El overlay se crea y se destruye
- * siempre desde task_gui (callbacks de LVGL).
+ * Modo administracion: el boton "ADM" del panel inferior abre un teclado de
+ * contrasena. Solo si la clave es correcta se construye el overlay de ajustes.
+ * Tanto el teclado como el overlay se crean y se destruyen desde task_gui
+ * (callbacks de LVGL).
  */
-static lv_obj_t *s_admin_hotspot = NULL;
+static lv_obj_t *s_admin_button = NULL;
 static lv_obj_t *s_admin_overlay = NULL;
 static bool s_admin_open = false;
+
+/** Teclado de contrasena previo al panel de administracion. */
+static lv_obj_t *s_admin_password_overlay = NULL;
+static lv_obj_t *s_admin_password_label = NULL;
+static lv_obj_t *s_admin_password_status = NULL;
+static char s_admin_password_input[GUI_ADMIN_PASSWORD_LEN + 1];
+static uint8_t s_admin_password_len = 0;
 
 /*
  * Widgets y borrador de precios del panel de administracion. El borrador se
  * aplica al estado global y a la NVS solo cuando el operador pulsa
  * "Guardar Precios".
  */
+static lv_obj_t *s_admin_balance_label = NULL;
 static lv_obj_t *s_admin_stock_label = NULL;
 static lv_obj_t *s_admin_status_label = NULL;
 static lv_obj_t *s_admin_price_labels[GUI_PRODUCT_COUNT];
-static lv_obj_t *s_admin_test_btns[GUI_PRODUCT_COUNT];
 static uint32_t s_admin_price_draft[GUI_PRODUCT_COUNT];
 
 /* --- Estado de la MicroSD ------------------------------------------------- */
@@ -813,6 +830,9 @@ static void create_cell(uint8_t index)
     lv_obj_center(plus_label);
 }
 
+/** Abre el teclado de contrasena del modo administracion. */
+static void on_admin_button_clicked(lv_event_t *event);
+
 static void create_bottom_panel(void)
 {
     s_bottom_panel = lv_obj_create(lv_scr_act());
@@ -869,6 +889,25 @@ static void create_bottom_panel(void)
     lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x95A5A6), 0);
     lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_10, 0);
 
+    /*
+     * Boton pequeno de acceso al modo administracion, junto a "Confirmar".
+     * No hay atajos ocultos: el acceso siempre pasa por la contrasena.
+     */
+    s_admin_button = lv_btn_create(s_bottom_panel);
+    lv_obj_set_size(s_admin_button, 46, 40);
+    lv_obj_set_style_radius(s_admin_button, 8, 0);
+    lv_obj_set_style_bg_color(s_admin_button, lv_color_hex(0x34495E), 0);
+    lv_obj_set_style_bg_color(s_admin_button, lv_color_hex(0x2C3E50),
+                              LV_STATE_PRESSED);
+    lv_obj_add_event_cb(s_admin_button, on_admin_button_clicked,
+                        LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *admin_label = lv_label_create(s_admin_button);
+    lv_label_set_text(admin_label, "ADM");
+    lv_obj_set_style_text_color(admin_label, lv_color_hex(0xBDC3C7), 0);
+    lv_obj_set_style_text_font(admin_label, &lv_font_montserrat_10, 0);
+    lv_obj_center(admin_label);
+
     s_confirm_btn = lv_btn_create(s_bottom_panel);
     lv_obj_set_size(s_confirm_btn, 118, 64);
     lv_obj_set_style_radius(s_confirm_btn, 10, 0);
@@ -915,8 +954,10 @@ static void create_toast(void)
 }
 
 /* ==========================================================================
- *  Modo administracion (pulsacion larga en la esquina superior izquierda)
+ *  Modo administracion (boton "ADM" + contrasena + ajustes del operador)
  * ========================================================================== */
+
+static void build_admin_overlay(void);
 
 static void destroy_admin_overlay(void)
 {
@@ -931,11 +972,11 @@ static void destroy_admin_overlay(void)
     s_admin_open = false;
 
     /* Los widgets ya no existen: invalidar las referencias colgantes. */
+    s_admin_balance_label = NULL;
     s_admin_stock_label = NULL;
     s_admin_status_label = NULL;
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
         s_admin_price_labels[i] = NULL;
-        s_admin_test_btns[i] = NULL;
     }
 }
 
@@ -992,6 +1033,239 @@ static lv_obj_t *create_admin_button(lv_obj_t *parent, const char *text,
     lv_obj_center(label);
 
     return button;
+}
+
+/* --- Teclado de contrasena ------------------------------------------------ */
+
+static void destroy_admin_password_overlay(void)
+{
+    if (s_admin_password_overlay != NULL) {
+        lv_obj_del_async(s_admin_password_overlay);
+        s_admin_password_overlay = NULL;
+    }
+    s_admin_password_label = NULL;
+    s_admin_password_status = NULL;
+    s_admin_password_len = 0;
+    s_admin_password_input[0] = '\0';
+    s_admin_open = false;
+}
+
+static void admin_password_status_set(const char *message)
+{
+    if (s_admin_password_status != NULL && message != NULL) {
+        lv_label_set_text(s_admin_password_status, message);
+    }
+}
+
+/** Redibuja el campo de contrasena con '*' por digito y '_' por hueco. */
+static void admin_password_refresh_label(void)
+{
+    char mask[GUI_ADMIN_PASSWORD_LEN * 2 + 1];
+    uint8_t pos = 0;
+    for (uint8_t i = 0; i < GUI_ADMIN_PASSWORD_LEN; i++) {
+        mask[pos++] = (i < s_admin_password_len) ? '*' : '_';
+        mask[pos++] = ' ';
+    }
+    mask[pos] = '\0';
+
+    if (s_admin_password_label != NULL) {
+        lv_label_set_text(s_admin_password_label, mask);
+    }
+}
+
+static void admin_password_clear(void)
+{
+    s_admin_password_len = 0;
+    s_admin_password_input[0] = '\0';
+    admin_password_refresh_label();
+}
+
+static void admin_password_submit(void)
+{
+    if (s_admin_password_len != GUI_ADMIN_PASSWORD_LEN) {
+        admin_password_status_set("Ingrese los 4 digitos");
+        return;
+    }
+
+    if (strcmp(s_admin_password_input, GUI_ADMIN_PASSWORD) != 0) {
+        ESP_LOGW(TAG, "Modo administracion: contrasena incorrecta");
+        admin_password_clear();
+        admin_password_status_set("Contrasena incorrecta");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Modo administracion: acceso concedido");
+    destroy_admin_password_overlay();
+    build_admin_overlay();
+}
+
+static void on_admin_password_digit_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    const uint8_t digit = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    if (digit > 9 || s_admin_password_len >= GUI_ADMIN_PASSWORD_LEN) {
+        return;
+    }
+
+    s_admin_password_input[s_admin_password_len++] = (char)('0' + digit);
+    s_admin_password_input[s_admin_password_len] = '\0';
+    admin_password_refresh_label();
+    admin_password_status_set("Ingrese la contrasena");
+
+    /* Al completar los 4 digitos se valida sin necesidad de pulsar OK. */
+    if (s_admin_password_len == GUI_ADMIN_PASSWORD_LEN) {
+        admin_password_submit();
+    }
+}
+
+static void on_admin_password_clear_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    admin_password_clear();
+    admin_password_status_set("Ingrese la contrasena");
+}
+
+static void on_admin_password_ok_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    admin_password_submit();
+}
+
+static void on_admin_password_close_clicked(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    ESP_LOGI(TAG, "Modo administracion: acceso cancelado");
+    destroy_admin_password_overlay();
+
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        s_ui_dirty = true;
+        state_unlock();
+    }
+    ui_notify();
+}
+
+static void build_admin_password_overlay(void)
+{
+    if (s_admin_password_overlay != NULL || s_admin_overlay != NULL) {
+        return;
+    }
+
+    admin_password_clear();
+
+    s_admin_password_overlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_admin_password_overlay, BOARD_TFT_H_RES, BOARD_TFT_V_RES);
+    lv_obj_set_pos(s_admin_password_overlay, 0, 0);
+    lv_obj_set_style_bg_color(s_admin_password_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_admin_password_overlay, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(s_admin_password_overlay, 0, 0);
+    lv_obj_set_style_radius(s_admin_password_overlay, 0, 0);
+    lv_obj_clear_flag(s_admin_password_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    /* Captura todos los clics: bloquea productos y panel inferior. */
+    lv_obj_add_flag(s_admin_password_overlay, LV_OBJ_FLAG_CLICKABLE);
+    s_admin_open = true;
+
+    lv_obj_t *card = lv_obj_create(s_admin_password_overlay);
+    lv_obj_set_size(card, 280, 400);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x1E2A38), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x3A5068), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 10, 0);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(card, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    /* Cabecera: titulo + cierre. */
+    lv_obj_t *header = lv_obj_create(card);
+    lv_obj_set_width(header, LV_PCT(100));
+    lv_obj_set_height(header, 30);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(header, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "Acceso Administrador");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xECF0F1), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+
+    (void)create_admin_button(header, "X", 34, 28, 0x7F8C8D,
+                              &lv_font_montserrat_14,
+                              on_admin_password_close_clicked, NULL);
+
+    s_admin_password_status = lv_label_create(card);
+    lv_label_set_text(s_admin_password_status, "Ingrese la contrasena");
+    lv_obj_set_width(s_admin_password_status, LV_PCT(100));
+    lv_label_set_long_mode(s_admin_password_status, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(s_admin_password_status, lv_color_hex(0x95A5A6), 0);
+    lv_obj_set_style_text_font(s_admin_password_status, &lv_font_montserrat_12, 0);
+
+    /* Campo de contrasena enmascarado. */
+    lv_obj_t *display = lv_obj_create(card);
+    lv_obj_set_size(display, LV_PCT(100), 46);
+    lv_obj_set_style_bg_color(display, lv_color_hex(0x101820), 0);
+    lv_obj_set_style_bg_opa(display, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(display, 0, 0);
+    lv_obj_set_style_radius(display, 8, 0);
+    lv_obj_clear_flag(display, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_admin_password_label = lv_label_create(display);
+    lv_obj_set_style_text_color(s_admin_password_label, lv_color_hex(0xF1C40F), 0);
+    lv_obj_set_style_text_font(s_admin_password_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(s_admin_password_label);
+    admin_password_refresh_label();
+
+    /* Teclado 3 x 4: 1-9, C, 0, OK. */
+    lv_obj_t *keypad = lv_obj_create(card);
+    lv_obj_set_width(keypad, LV_PCT(100));
+    lv_obj_set_height(keypad, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(keypad, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(keypad, 0, 0);
+    lv_obj_set_style_pad_all(keypad, 4, 0);
+    lv_obj_set_style_pad_row(keypad, 6, 0);
+    lv_obj_set_style_pad_column(keypad, 6, 0);
+    lv_obj_clear_flag(keypad, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(keypad, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(keypad, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(keypad, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    for (uint8_t digit = 1; digit <= 9; digit++) {
+        char text[2] = {(char)('0' + digit), '\0'};
+        (void)create_admin_button(keypad, text, 78, 48, 0x34495E,
+                                  &lv_font_montserrat_16,
+                                  on_admin_password_digit_clicked,
+                                  (void *)(uintptr_t)digit);
+    }
+
+    (void)create_admin_button(keypad, "C", 78, 48, 0xC0392B,
+                              &lv_font_montserrat_14,
+                              on_admin_password_clear_clicked, NULL);
+    (void)create_admin_button(keypad, "0", 78, 48, 0x34495E,
+                              &lv_font_montserrat_16,
+                              on_admin_password_digit_clicked,
+                              (void *)(uintptr_t)0);
+    (void)create_admin_button(keypad, "OK", 78, 48, 0x27AE60,
+                              &lv_font_montserrat_14,
+                              on_admin_password_ok_clicked, NULL);
 }
 
 static void on_admin_close_clicked(lv_event_t *event)
@@ -1138,71 +1412,77 @@ static void on_admin_save_prices_clicked(lv_event_t *event)
     ui_notify();
 }
 
-static void on_admin_test_clicked(lv_event_t *event)
+/** Redibuja el saldo del panel admin. Se llama con el Mutex tomado. */
+static void admin_refresh_balance_label(void)
+{
+    if (s_admin_balance_label != NULL) {
+        lv_label_set_text_fmt(s_admin_balance_label,
+                              "Saldo actual: RD$ %lld.%02lld",
+                              (long long)(s_balance_cents / 100),
+                              (long long)(s_balance_cents % 100));
+    }
+}
+
+/**
+ * Ajuste manual de saldo. user_data codifica el paso y la direccion:
+ *   bit 0 = 1 suma, 0 resta; bits 1..3 = indice de paso (1/5/10/25).
+ */
+static void on_admin_balance_step_clicked(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
         return;
     }
 
-    const uint8_t channel =
-        (uint8_t)(uintptr_t)lv_event_get_user_data(event);
-    if (channel >= GUI_PRODUCT_COUNT) {
-        return;
-    }
-
-    /*
-     * Un test no puede convivir con un pedido real ni con otro test: la cola y
-     * la fuente de 12 V son recursos unicos. Se rechaza antes de encolar.
-     */
-    if (motor_control_is_busy()) {
-        admin_set_status("Espere a que termine el despacho");
-        return;
-    }
-
-    bool allowed = false;
-    const char *reason = "Prueba no disponible";
-    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
-        if (s_order.active || s_modal_open) {
-            reason = "Espere a que termine el despacho";
-        } else if (s_products[channel].stock == 0) {
-            reason = "Producto agotado: no se puede probar";
-        } else {
-            allowed = true;
-        }
-        state_unlock();
-    } else {
-        reason = "Estado ocupado: intente de nuevo";
-    }
-
-    if (!allowed) {
-        admin_set_status(reason);
-        return;
-    }
-
-    const motor_request_t request = {
-        .channel = channel,
-        .quantity = 1,
-        .admin_test = true,
+    static const int64_t steps[GUI_ADMIN_BALANCE_STEPS] = {
+        100, 500, 1000, 2500
     };
-    const esp_err_t err = motor_control_enqueue_batch(&request, 1);
+    const uint32_t code = (uint32_t)(uintptr_t)lv_event_get_user_data(event);
+    const uint8_t step = (uint8_t)(code >> 1);
+    const bool is_plus = (code & 1U) != 0;
+    if (step >= GUI_ADMIN_BALANCE_STEPS) {
+        return;
+    }
+
+    if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        admin_set_status("Estado ocupado: intente de nuevo");
+        return;
+    }
+
+    if (s_order.active || s_modal_open) {
+        set_toast_locked("Espere a que termine el despacho");
+        s_ui_dirty = true;
+        state_unlock();
+        admin_set_status("Espere a que termine el despacho");
+        ui_notify();
+        return;
+    }
+
+    const int64_t delta = is_plus ? steps[step] : -steps[step];
+    int64_t balance = s_balance_cents + delta;
+    if (balance < 0) {
+        balance = 0;
+    }
+    if (balance > GUI_ADMIN_BALANCE_MAX_CENTS) {
+        balance = GUI_ADMIN_BALANCE_MAX_CENTS;
+    }
+    s_balance_cents = balance;
+
+    const esp_err_t save_err = storage_save_locked();
+    set_toast_locked(save_err == ESP_OK
+                         ? "Saldo actualizado"
+                         : "Saldo actualizado; fallo al guardar NVS");
+    s_ui_dirty = true;
+    admin_refresh_balance_label();
+    state_unlock();
 
     char status[GUI_TOAST_MAX_LEN];
-    if (err == ESP_OK) {
-        snprintf(status, sizeof(status), "Prueba M%u encolada",
-                 (unsigned)(channel + 1));
-        ESP_LOGI(TAG, "Modo administracion: prueba del motor %u encolada",
-                 (unsigned)(channel + 1));
-    } else if (err == ESP_ERR_INVALID_STATE) {
-        snprintf(status, sizeof(status),
-                 "Motores no disponibles: conecte los modulos I2C");
-        ESP_LOGW(TAG, "Modo administracion: control de motores no inicializado");
-    } else {
-        snprintf(status, sizeof(status), "No se pudo encolar la prueba M%u",
-                 (unsigned)(channel + 1));
-        ESP_LOGW(TAG, "Modo administracion: fallo al encolar prueba M%u: %s",
-                 (unsigned)(channel + 1), esp_err_to_name(err));
-    }
+    snprintf(status, sizeof(status), "Saldo: RD$ %lld.%02lld",
+             (long long)(balance / 100), (long long)(balance % 100));
     admin_set_status(status);
+    ESP_LOGI(TAG, "Modo administracion: saldo ajustado a RD$ %lld.%02lld (%s)",
+             (long long)(balance / 100), (long long)(balance % 100),
+             esp_err_to_name(save_err));
+    ui_notify();
 }
 
 static void build_admin_overlay(void)
@@ -1212,10 +1492,12 @@ static void build_admin_overlay(void)
     }
 
     uint8_t stock[GUI_PRODUCT_COUNT] = {0};
+    int64_t balance = 0;
     if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
         ESP_LOGW(TAG, "Modo administracion: no se pudo leer el estado");
         return;
     }
+    balance = s_balance_cents;
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
         stock[i] = s_products[i].stock;
         s_admin_price_draft[i] = s_products[i].price_cents;
@@ -1296,7 +1578,59 @@ static void build_admin_overlay(void)
     lv_obj_set_scroll_dir(content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
 
-    /* --- Seccion 1: inventario ------------------------------------------- */
+    /* --- Seccion 1: saldo ------------------------------------------------- */
+    lv_obj_t *balance_section = create_admin_section(content, "Saldo");
+
+    s_admin_balance_label = lv_label_create(balance_section);
+    lv_label_set_text_fmt(s_admin_balance_label,
+                          "Saldo actual: RD$ %lld.%02lld",
+                          (long long)(balance / 100),
+                          (long long)(balance % 100));
+    lv_obj_set_style_text_color(s_admin_balance_label, lv_color_hex(0x2ECC71), 0);
+    lv_obj_set_style_text_font(s_admin_balance_label, &lv_font_montserrat_16, 0);
+
+    static const char *const minus_text[GUI_ADMIN_BALANCE_STEPS] = {
+        "-1", "-5", "-10", "-25"
+    };
+    static const char *const plus_text[GUI_ADMIN_BALANCE_STEPS] = {
+        "+1", "+5", "+10", "+25"
+    };
+
+    /* Dos filas: restar (rojo) y sumar (verde). */
+    for (uint8_t row_index = 0; row_index < 2; row_index++) {
+        const bool is_plus = (row_index == 1);
+
+        lv_obj_t *row = lv_obj_create(balance_section);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 38);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_set_style_pad_column(row, 6, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        for (uint8_t i = 0; i < GUI_ADMIN_BALANCE_STEPS; i++) {
+            (void)create_admin_button(
+                row, is_plus ? plus_text[i] : minus_text[i], 60, 38,
+                is_plus ? 0x27AE60 : 0xC0392B, &lv_font_montserrat_12,
+                on_admin_balance_step_clicked,
+                (void *)(uintptr_t)(((uint32_t)i << 1) |
+                                    (is_plus ? 1U : 0U)));
+        }
+    }
+
+    lv_obj_t *balance_hint = lv_label_create(balance_section);
+    lv_label_set_text(balance_hint, "Cada ajuste se guarda en NVS al instante.");
+    lv_obj_set_width(balance_hint, LV_PCT(100));
+    lv_label_set_long_mode(balance_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(balance_hint, lv_color_hex(0x95A5A6), 0);
+    lv_obj_set_style_text_font(balance_hint, &lv_font_montserrat_10, 0);
+
+    /* --- Seccion 2: inventario ------------------------------------------- */
     lv_obj_t *inventory = create_admin_section(content, "Inventario");
 
     s_admin_stock_label = lv_label_create(inventory);
@@ -1313,7 +1647,7 @@ static void build_admin_overlay(void)
                               &lv_font_montserrat_14,
                               on_admin_reset_stock_clicked, NULL);
 
-    /* --- Seccion 2: precios ---------------------------------------------- */
+    /* --- Seccion 3: precios ---------------------------------------------- */
     lv_obj_t *prices = create_admin_section(content, "Precios (RD$)");
 
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
@@ -1361,65 +1695,49 @@ static void build_admin_overlay(void)
     (void)create_admin_button(prices, "Guardar Precios", LV_PCT(100), 40,
                               0x2980B9, &lv_font_montserrat_14,
                               on_admin_save_prices_clicked, NULL);
-
-    /* --- Seccion 3: prueba de motores ------------------------------------ */
-    lv_obj_t *tests = create_admin_section(content, "Prueba de Motores");
-
-    lv_obj_t *test_grid = lv_obj_create(tests);
-    lv_obj_set_width(test_grid, LV_PCT(100));
-    lv_obj_set_height(test_grid, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(test_grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(test_grid, 0, 0);
-    lv_obj_set_style_pad_all(test_grid, 0, 0);
-    lv_obj_set_style_pad_row(test_grid, 6, 0);
-    lv_obj_set_style_pad_column(test_grid, 6, 0);
-    lv_obj_clear_flag(test_grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(test_grid, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(test_grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(test_grid, LV_FLEX_ALIGN_SPACE_EVENLY,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-        char text[16];
-        snprintf(text, sizeof(text), "Test M%u", (unsigned)(i + 1));
-        s_admin_test_btns[i] =
-            create_admin_button(test_grid, text, 78, 38, 0x8E44AD,
-                                &lv_font_montserrat_12,
-                                on_admin_test_clicked,
-                                (void *)(uintptr_t)i);
-    }
-
-    lv_obj_t *hint = lv_label_create(tests);
-    lv_label_set_text(hint, "Solo descuenta stock; no toca el saldo.");
-    lv_obj_set_width(hint, LV_PCT(100));
-    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x95A5A6), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
 }
 
-static void on_admin_hotspot_long_pressed(lv_event_t *event)
+/**
+ * Boton "ADM" del panel inferior: abre el teclado de contrasena. El panel de
+ * ajustes solo se construye si la clave es correcta.
+ */
+static void on_admin_button_clicked(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_LONG_PRESSED) {
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
         return;
     }
-    ESP_LOGI(TAG, "Pulsacion larga: abriendo modo administracion");
-    build_admin_overlay();
-}
 
-static void create_admin_hotspot(void)
-{
-    s_admin_hotspot = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(s_admin_hotspot, GUI_ADMIN_HOTSPOT_SIZE,
-                    GUI_ADMIN_HOTSPOT_SIZE);
-    lv_obj_set_pos(s_admin_hotspot, 0, 0);
-    lv_obj_set_style_bg_opa(s_admin_hotspot, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_admin_hotspot, 0, 0);
-    lv_obj_set_style_radius(s_admin_hotspot, 0, 0);
-    lv_obj_set_style_pad_all(s_admin_hotspot, 0, 0);
-    lv_obj_clear_flag(s_admin_hotspot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_admin_hotspot, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_admin_hotspot, on_admin_hotspot_long_pressed,
-                        LV_EVENT_LONG_PRESSED, NULL);
+    if (s_admin_overlay != NULL || s_admin_password_overlay != NULL) {
+        return;
+    }
+
+    bool blocked = false;
+    if (motor_control_is_busy()) {
+        blocked = true;
+    } else if (!state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        return;
+    } else {
+        blocked = s_order.active || s_modal_open;
+        if (blocked) {
+            set_toast_locked("Espere a que termine el despacho");
+            s_ui_dirty = true;
+        }
+        state_unlock();
+    }
+
+    if (blocked) {
+        ui_notify();
+        return;
+    }
+
+    ESP_LOGI(TAG, "Modo administracion: solicitando contrasena");
+    build_admin_password_overlay();
+
+    if (state_lock(GUI_STATE_LOCK_TIMEOUT_MS)) {
+        s_ui_dirty = true;
+        state_unlock();
+    }
+    ui_notify();
 }
 
 static void build_ui(void)
@@ -1461,8 +1779,6 @@ static void build_ui(void)
 
     create_bottom_panel();
     create_toast();
-    /* Se crea al final para quedar por encima del grid y del toast. */
-    create_admin_hotspot();
 }
 
 /* ==========================================================================
@@ -1692,9 +2008,9 @@ static void gui_refresh_ui(void)
      */
 
     /*
-     * Panel de administracion abierto: refrescar stock y habilitar/deshabilitar
-     * los tests segun el estado real. El overlay vive en la misma tarea, asi
-     * que tocar sus widgets aqui es seguro.
+     * Panel de administracion abierto: refrescar stock y saldo con el estado
+     * real. El overlay vive en la misma tarea, asi que tocar sus widgets aqui
+     * es seguro.
      */
     if (s_admin_overlay != NULL) {
         if (s_admin_stock_label != NULL) {
@@ -1707,15 +2023,11 @@ static void gui_refresh_ui(void)
                                   (unsigned)snapshot.products[4].stock,
                                   (unsigned)snapshot.products[5].stock);
         }
-        for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
-            if (s_admin_test_btns[i] == NULL) {
-                continue;
-            }
-            if (snapshot.order_active || snapshot.products[i].stock == 0) {
-                lv_obj_add_state(s_admin_test_btns[i], LV_STATE_DISABLED);
-            } else {
-                lv_obj_clear_state(s_admin_test_btns[i], LV_STATE_DISABLED);
-            }
+        if (s_admin_balance_label != NULL) {
+            lv_label_set_text_fmt(s_admin_balance_label,
+                                  "Saldo actual: RD$ %lld.%02lld",
+                                  (long long)(snapshot.balance_cents / 100),
+                                  (long long)(snapshot.balance_cents % 100));
         }
         if (snapshot.toast_pending && s_admin_status_label != NULL) {
             lv_label_set_text(s_admin_status_label, snapshot.toast);
@@ -1965,13 +2277,6 @@ static esp_err_t init_lvgl(void)
         lv_indev_drv_init(&s_indev_drv);
         s_indev_drv.type = LV_INDEV_TYPE_POINTER;
         s_indev_drv.read_cb = lv_touch_read_cb;
-        /*
-         * Pulsacion larga global de 3 s: es la que abre el modo
-         * administracion desde el boton invisible. Los botones normales solo
-         * reaccionan a CLICKED, por lo que no se ven afectados.
-         * En LVGL 8.4 se configura en el driver antes de registrarlo.
-         */
-        s_indev_drv.long_press_time = GUI_ADMIN_LONG_PRESS_MS;
         if (lv_indev_drv_register(&s_indev_drv) == NULL) {
             ESP_LOGW(TAG, "No se pudo registrar el tactil en LVGL");
         }

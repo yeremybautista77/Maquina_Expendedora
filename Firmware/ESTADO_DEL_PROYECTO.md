@@ -6,15 +6,16 @@
 >
 > **Última actualización:** 2026-10-30
 > **Estado global:** **fase P1 de software completada y modo administración
-> ampliado** (inventario, precios mutables en NVS y prueba de motores) y se
-> sube a GitHub al cierre de esta sesión. Pines confirmados, estrategia híbrida
-> de motores, *homing* de M1–M4, NVS, layout Flex 2×3 y cobro diferido por
-> unidad implementados; compila sin errores ni warnings
-> (`maquina_expendedora.bin` = **613 872 B**, 41 % libre).
+> ampliado** (acceso por botón + contraseña, ajuste manual de saldo, inventario
+> y precios mutables en NVS) y se sube a GitHub al cierre de esta sesión. Pines
+> confirmados, estrategia híbrida de motores, *homing* de M1–M4, NVS, layout
+> Flex 2×3 y cobro diferido por unidad implementados; compila sin errores ni
+> warnings (`maquina_expendedora.bin` = **616 224 B**, 41 % libre).
 > **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
 > XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
-> corregidos (sin inversión). Pendiente: monedero, módulos I2C/motores,
-> *homing*, NVS y modo administración en la placa real.
+> corregidos (sin inversión). **Monedero validado en placa** (CH-926, NO + FAST,
+> 1/3/5/7 pulsos = RD$ 1/5/10/25, saldo persistido en NVS). Pendiente: módulos
+> I2C/motores, *homing* y compra completa en la placa real.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -34,17 +35,18 @@
 - [x] Encolado atómico: lote todo-o-nada con `s_queue_mutex` y
       `motor_control_check_capacity()`; si no cabe el pedido completo, se
       rechaza entero y la GUI pide reducir la cantidad.
-- [x] Modo administración oculto: pulsación larga de 3 s en la esquina superior
-      izquierda → panel con scroll de tres secciones: **inventario** (reset a 10),
-      **precios** (6 productos, ± RD$ 5 y guardado en NVS) y **prueba de motores**
-      (`Test M1`…`Test M6`, sin tocar el saldo).
+- [x] Modo administración por botón `ADM` junto a `Confirmar` + contraseña
+      provisional **0000** → panel con scroll de tres secciones: **saldo**
+      (± RD$ 1/5/10/25, persistido en NVS al instante), **inventario** (reset a
+      10) y **precios** (6 productos, ± RD$ 5 y guardado en NVS). Sin prueba de
+      motores.
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
 - [x] *Homing* secuencial de los canales M1–M4 al arrancar (timeout 10 s).
 - [x] Persistencia en NVS de saldo, stock y precios (carga al arrancar; guardado
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**613 872 B**, 41 % libre) y `Firmware/` versionado.
+- [x] Build limpio (**616 224 B**, 41 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -59,11 +61,11 @@
 
 **Estado de las acciones de esta sesión:**
 
-- [x] Expansión del modo administración: inventario, precios mutables en NVS y
-      prueba de motores con marca `admin_test`.
-- [x] Build limpio sin warnings → **613 872 B** (`0x95df0`), 41 % libre.
-- [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
-      presente (placa desconectada o cable solo de carga).
+- [x] Modo administración rediseñado: botón `ADM` + contraseña `0000`, ajuste
+      manual de saldo (± RD$ 1/5/10/25) y eliminación de la prueba de motores
+      del panel.
+- [x] Build limpio sin warnings → **616 224 B** (`0x96920`), 41 % libre.
+- [x] Flasheo por COM5 y validación del monedero CH-926 en placa.
 
 ---
 
@@ -169,7 +171,27 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
    abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
    el aviso `Espere a que termine el despacho` si hay una compra en curso.
-5. **Build:** **613 872 B** (`0x95df0`), **41 % libre**, sin warnings.
+5. **Build:** **616 224 B** (`0x96920`), **41 % libre**, sin warnings.
+
+### Rediseño del acceso administrador (2026-10-30)
+
+1. **Acceso por botón:** se eliminó el botón invisible de 40×40 px y la
+   pulsación larga de 3 s (`GUI_ADMIN_LONG_PRESS_MS`, `long_press_time` del
+   driver táctil). En su lugar, el panel inferior tiene un botón `ADM` de
+   **46×40 px** junto a `Confirmar`.
+2. **Contraseña provisional 0000:** el botón abre un teclado numérico 3×4
+   (`1`–`9`, `C`, `0`, `OK`). El cuarto dígito se valida automáticamente;
+   `C` limpia el campo y `OK` reintenta el envío. Con la clave incorrecta se
+   muestra `Contrasena incorrecta`. El panel de ajustes solo se construye tras
+   un acceso correcto.
+3. **Ajuste de saldo:** nueva sección **Saldo** al inicio del panel, con botones
+   `-1`, `-5`, `-10`, `-25` (rojo) y `+1`, `+5`, `+10`, `+25` (verde). Cada
+   pulsación actualiza `s_balance_cents`, guarda en NVS y refresca la pantalla
+   principal. Rango acotado a RD$ 0.00–10 000.00.
+4. **Sin prueba de motores:** se eliminaron la sección `Prueba de Motores`, los
+   botones `Test M1`…`Test M6` y el callback `on_admin_test_clicked`. El soporte
+   `admin_test` permanece en `motor_control.c`/`main.c`, pero la GUI ya no lo usa.
+5. **Build:** **616 224 B** (`0x96920`), **41 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -180,14 +202,14 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Bloque | Estado | Qué falta / riesgo |
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
-| Monedero (ISR IO35) | ✅ Implementado | Filtro anti-fantasma probado sin monedero; falta validar monedas reales |
+| Monedero (ISR IO35) | ✅ Validado en placa | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25 |
 | Despacho I2C + Mutex | ✅ Implementado | Validar con motores reales |
 | *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
-| Persistencia NVS | ✅ Implementado | Probar apagón/reinicio real |
+| Persistencia NVS | ✅ Implementado | Saldo validado tras reinicio; falta stock/precios |
 | GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
 | Encolado atómico | ✅ Implementado | Probar rechazo con la cola llena en placa |
-| Modo administración | ✅ Implementado | Panel completo: inventario, precios y test de motores |
+| Modo administración | ✅ Implementado | Botón `ADM` + clave `0000`; saldo, inventario y precios |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
 | Push a GitHub | ✅ Hecho | `origin/main` incluye la expansión del modo administración |
@@ -540,16 +562,17 @@ Orden de arranque en `app_main()`:
   - Se guarda al acreditar monedas, al cambiar stock, al guardar precios y en
     cada unidad cobrada o entregada por un test
     (`gui_display_on_unit_dispatched()`).
-- **Modo administración** (pulsación larga de 3 s en la esquina superior
-  izquierda): overlay a pantalla completa con un contenedor Flex vertical
-  desplazable y tres secciones:
+- **Modo administración** (botón `ADM` de 46×40 px junto a `Confirmar` +
+  contraseña provisional `0000`): el teclado numérico a pantalla completa se
+  valida antes de construir el panel del operador. El panel tiene un contenedor
+  Flex vertical desplazable con tres secciones:
+  - **Saldo:** saldo actual y ajuste manual `-1/-5/-10/-25` y `+1/+5/+10/+25`;
+    cada pulsación persiste en NVS y refresca la pantalla principal.
   - **Inventario:** stock de los 6 canales y `Rellenar Stock (Reset a 10)`.
   - **Precios:** filas con `[-]`/`[+]` (paso RD$ 5) y `Guardar Precios`. El
     borrador se aplica al estado y a NVS solo al guardar; luego se refresca la
     pantalla principal.
-  - **Prueba de motores:** `Test M1`…`Test M6`, que encolan una unidad con
-    `admin_test = true`. Se rechazan si hay pedido activo, modal abierto, cola o
-    motor ocupados, o stock 0.
+  - No incluye prueba de motores: la GUI ya no encola solicitudes `admin_test`.
 - `task_gui` inyecta `lv_tick_inc()`, llama a `lv_timer_handler()` y refresca
   los widgets solo cuando el estado cambia (notificación + snapshot).
 - Concurrencia: `s_state_mutex` protege saldo, stock, precios, cantidades, modal
@@ -586,10 +609,8 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
       → si un motor falla: MOTOR_EVENT_REQUEST_FAILED
          → se descarta la cola; lo no entregado no se cobra ni baja stock
 
-Administrador → pulsación larga (3 s) → panel → "Test Mx"
-      → motor_control_enqueue_batch(..., admin_test = true)
-      → por cada vuelta OK: MOTOR_EVENT_UNIT_DONE (admin_test = true)
-      → gui_display_on_unit_dispatched(): stock -= 1, NVS; saldo intacto
+Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
+      → ajuste manual +/- RD$ 1/5/10/25 → NVS + refresco de la GUI
 ```
 
 ---
@@ -681,11 +702,12 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
   - *Criterio:* apagar y encender conserva saldo, stock y precios.
 
 - [x] **Modo administración completo**
-  - Botón invisible de 40×40 px en la esquina superior izquierda, fuera de los
-    botones `[-] [+]`.
-  - El driver táctil usa `long_press_time = 3000 ms`; al recibir
-    `LV_EVENT_LONG_PRESSED` se abre un overlay a pantalla completa que bloquea
-    los botones de producto.
+  - Botón `ADM` de 46×40 px en el panel inferior, junto a `Confirmar`.
+  - Abre un teclado numérico con contraseña provisional `0000`; el cuarto dígito
+    se valida solo. Si la clave es incorrecta se muestra `Contrasena incorrecta`
+    y se limpia el campo. Solo tras el acceso correcto se construye el panel.
+  - **Saldo:** saldo actual y botones `-1/-5/-10/-25` y `+1/+5/+10/+25`. Cada
+    pulsación actualiza `s_balance_cents`, guarda en NVS y refresca la GUI.
   - **Inventario:** muestra el stock de los 6 canales y el botón
     `Rellenar Stock (Reset a 10)`, que pone todo a 10, limpia cantidades y
     persiste en NVS sin cerrar el panel.
@@ -693,12 +715,9 @@ Administrador → pulsación larga (3 s) → panel → "Test Mx"
     `Guardar Precios`. Los cambios son un borrador local; al guardar se aplican
     a `s_products[].price_cents`, se persisten y se refresca la pantalla
     principal. Rango válido: RD$ 5.00–1000.00.
-  - **Prueba de motores:** `Test M1`…`Test M6` encolan una unidad con
-    `admin_test = true`. El evento de unidad entregada solo descuenta stock;
-    nunca toca saldo, pedido ni modal.
-  - Guardas: el reset y los tests se rechazan con
-    `Espere a que termine el despacho` si hay una compra activa; los tests
-    también se rechazan con motor/cola ocupados o stock 0.
+  - Sin prueba de motores: el panel ya no encola solicitudes `admin_test`.
+  - Guardas: el ajuste de saldo, el reset y el guardado de precios se rechazan
+    con `Espere a que termine el despacho` si hay una compra activa.
   - *Pendiente:* historial de ventas/recaudación y diagnóstico de sensores.
 
 ### P2 — Extras / V2.0 (según documento de arquitectura §7)
@@ -839,14 +858,17 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
     conservarse.
 11. **Fallo controlado:** desconectar un sensor de M1–M4 o bloquear un motor y
     verificar que el pedido se cancela sin cobrar las unidades no entregadas.
-12. **Modo administración:** mantener pulsada la esquina superior izquierda
-    durante 3 s; debe abrirse el panel con scroll. Verificar:
+12. **Modo administración:** pulsar `ADM` junto a `Confirmar`; debe abrirse el
+    teclado numérico. Probar:
+    - Clave incorrecta: muestra `Contrasena incorrecta` y limpia el campo.
+    - Clave `0000`: abre el panel con scroll.
+    - Saldo: `+1/+5/+10/+25` y `-1/-5/-10/-25` ajustan el saldo, refrescan la
+      pantalla principal y sobreviven a un reinicio.
     - Inventario: `Rellenar Stock (Reset a 10)` deja los 6 productos a 10 y
       sobrevive a un reinicio.
     - Precios: `[-]`/`[+]` cambian el borrador en RD$ 5; `Guardar Precios`
       actualiza la pantalla principal y persiste tras reiniciar.
-    - Motores: `Test Mx` entrega una unidad, baja el stock en 1 y **no** cambia
-      el saldo. Repetir con stock 0: debe rechazarse.
+    - El panel **no** debe mostrar `Test M1`…`Test M6`.
 13. **Encolado atómico:** con la UI normal es difícil llenar la cola (máximo 6
     líneas por pedido, cola de 8 y un solo pedido a la vez). Para probar el
     rechazo, reducir temporalmente `MOTOR_QUEUE_LENGTH` a 1 o añadir una prueba
@@ -863,7 +885,7 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 1. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
    (Algunos módulos de 5 V con optoacoplador necesitan adaptador de nivel).
 2. ¿Se requiere otro método de acceso al modo administración (SD, Wi-Fi, PIN)?
-   Hoy es una pulsación larga de 3 s en la esquina superior izquierda.
+   Hoy es un botón `ADM` en el panel inferior con contraseña provisional `0000`.
 3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
 4. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
    las unidades que salieron? (Hoy se cobran solo las entregadas).

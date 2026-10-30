@@ -44,9 +44,10 @@
  *   GUI pide reducir la cantidad.
  *
  * Modo administracion:
- *   Pulsacion larga de 3 s sobre un boton invisible en la esquina superior
- *   izquierda. Abre un overlay con "Rellenar Stock (Reset a 10)", que guarda el
- *   nuevo stock en NVS y vuelve a la pantalla principal.
+ *   Boton "ADM" junto a "Confirmar" en el panel inferior. Abre un teclado de
+ *   contrasena (0000, provisional); solo si la clave es correcta se muestra el
+ *   panel del operador con ajuste de saldo (+/- RD$ 1/5/10/25, persistido en
+ *   NVS), relleno de stock y edicion de precios. No incluye prueba de motores.
  *
  * Concurrencia:
  *   - El estado (saldo, stock, cantidades y pedido en curso) esta protegido por

@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **613 872 B**, 41 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **616 224 B**, 41 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -112,16 +112,17 @@ El estado operativo sobrevive a cortes de energía gracias a **NVS** (flash inte
 
 El modo administración es una herramienta de mantenimiento para el operador. No forma parte del flujo de venta.
 
-*   **Acceso oculto:** botón invisible de **40×40 px** en la esquina superior izquierda. El driver táctil configura `long_press_time = 3000 ms`; al recibir `LV_EVENT_LONG_PRESSED` se abre un overlay a pantalla completa que bloquea los productos y el panel inferior.
+*   **Acceso por botón + contraseña:** el panel inferior tiene un botón pequeño `ADM` (46×40 px) junto a `Confirmar`. Al pulsarlo se abre un teclado numérico a pantalla completa que bloquea los productos y el panel inferior.
+    *   La contraseña provisional es **0000** (`GUI_ADMIN_PASSWORD`). Se valida en el firmware y no se persiste en NVS.
+    *   Al introducir el cuarto dígito se valida automáticamente; `OK` permite reintentar el envío y `C` borra lo tecleado.
+    *   Con la clave incorrecta se muestra `Contrasena incorrecta` y se limpia el campo. La `X` cancela el acceso.
+    *   Solo si la clave es correcta se construye el panel del operador. Ya no existe el atajo por pulsación larga ni el botón invisible de la esquina superior izquierda.
 *   **Panel con scroll vertical**, compuesto por tres secciones:
-    1.  **Inventario:** muestra el stock de los 6 canales y el botón `Rellenar Stock (Reset a 10)`. El reset limpia las cantidades seleccionadas y persiste en NVS.
-    2.  **Precios:** una fila por producto con el precio actual, botones `[-]`/`[+]` en pasos de **500 centavos (RD$ 5)** y `Guardar Precios`. Los cambios son un borrador local hasta pulsar guardar; el rango válido es **RD$ 5.00–1000.00**. Al guardar se actualiza `s_products[].price_cents`, se persiste en NVS y se refresca la pantalla principal.
-    3.  **Prueba de motores:** botones `Test M1`…`Test M6`. Cada uno encola **una** unidad con `motor_control_enqueue_batch()` y `admin_test = true`.
-*   **Separación venta real / test:** la bandera `admin_test` viaja en `motor_request_t` (solicitud) y `motor_event_t` (evento), y se propaga por `motor_control.c` y `main.c`.
-    *   En `gui_display_on_unit_dispatched(channel, admin_test)`, una venta real descuenta saldo y stock; un test **solo reduce el stock en 1** (el producto cae físicamente) y persiste en NVS.
-    *   Un test **nunca** toca saldo, pedido, modal ni totales.
-    *   Un fallo de test solo informa al operador; no cancela ningún pedido ni devuelve saldo.
-*   **Guardas:** los tests se rechazan si hay pedido activo, modal abierto, motor/cola ocupados o stock 0. El reset y el guardado de precios se rechazan con `Espere a que termine el despacho` si hay una compra en curso.
+    1.  **Saldo:** muestra el saldo actual y permite ajustarlo manualmente con botones `-1`, `-5`, `-10`, `-25` (rojo) y `+1`, `+5`, `+10`, `+25` (verde). Cada pulsación actualiza `s_balance_cents`, se persiste en NVS al instante y refresca la pantalla principal. El saldo se acota a **RD$ 0.00–10 000.00**.
+    2.  **Inventario:** muestra el stock de los 6 canales y el botón `Rellenar Stock (Reset a 10)`. El reset limpia las cantidades seleccionadas y persiste en NVS.
+    3.  **Precios:** una fila por producto con el precio actual, botones `[-]`/`[+]` en pasos de **500 centavos (RD$ 5)** y `Guardar Precios`. Los cambios son un borrador local hasta pulsar guardar; el rango válido es **RD$ 5.00–1000.00**. Al guardar se actualiza `s_products[].price_cents`, se persiste en NVS y se refresca la pantalla principal.
+*   **Sin prueba de motores:** el panel de administración ya no incluye `Test M1`…`Test M6`. El soporte `admin_test` sigue existiendo en `motor_control.c` y `main.c` por compatibilidad, pero la GUI no lo utiliza.
+*   **Guardas:** el ajuste de saldo, el reset de stock y el guardado de precios se rechazan con `Espere a que termine el despacho` si hay una compra en curso. El botón `ADM` tampoco abre el teclado mientras haya un pedido activo o un modal abierto.
 
 ## 9. Homing Secuencial de Arranque
 

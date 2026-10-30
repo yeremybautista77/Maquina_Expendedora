@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **613 872 B**, 41 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **616 224 B**, 41 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -159,15 +159,15 @@ Firmware/
   vuelta con el sensor en el nivel de reposo (M1–M4) o completa el pulso
   temporizado (M5–M6). Si un motor falla por timeout, se descarta el resto del
   pedido y **lo no entregado no se cobra ni reduce stock**.
-- **Modo administración:** pulsación larga de 3 s en la esquina superior
-  izquierda. Panel con scroll de tres secciones: inventario (reset a 10),
-  precios (`[-]`/`[+]` en RD$ 5 + guardado en NVS) y prueba de motores
-  (`Test M1`…`Test M6`). Un test solo descuenta stock; nunca toca el saldo.
+- **Modo administración:** botón `ADM` (46×40 px) junto a `Confirmar` y
+  contraseña provisional **0000**. El teclado numérico se valida antes de abrir
+  el panel con scroll de tres secciones: saldo (± RD$ 1/5/10/25, persistido en
+  NVS al instante), inventario (reset a 10) y precios (`[-]`/`[+]` en RD$ 5 +
+  guardado en NVS). El panel no incluye prueba de motores.
 
 ## Pendiente (iterativo)
 
 1. Validar en placa el monedero, los módulos I2C/motores y el modo
-   administración completo (precios y tests de motor). El táctil ya está
+   administración completo (saldo, inventario y precios). El táctil ya está
    calibrado (`BOARD_TOUCH_MIRROR_X = 0`, `MIRROR_Y = 1`).
-2. Validar en placa el modo administración completo (precios y tests de motor).
-3. Telemetría Wi-Fi y audio (V2.0).
+2. Telemetría Wi-Fi y audio (V2.0).
