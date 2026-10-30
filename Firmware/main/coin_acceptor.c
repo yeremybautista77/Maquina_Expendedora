@@ -48,6 +48,9 @@ static volatile uint32_t s_isr_dropped = 0;
 /** Pulsos descartados por ancho invalido o por la ventana de arranque. */
 static volatile uint32_t s_isr_rejected = 0;
 
+/** Flancos de activacion vistos por la ISR (diagnostico de cableado). */
+static volatile uint32_t s_isr_edges = 0;
+
 /**
  * Monedero armado: solo cuando la linea lleva COIN_ARM_STABLE_MS en reposo.
  * Mientras esta en false la ISR descarta todo pulso, de modo que un IO35
@@ -89,6 +92,7 @@ static void IRAM_ATTR coin_isr_handler(void *arg)
         if (!s_pulse_active) {
             s_pulse_active = true;
             s_pulse_start_us = now_us;
+            s_isr_edges++;
         }
         return;
     }
@@ -263,6 +267,10 @@ void coin_acceptor_task(void *arg)
     int64_t active_since_us = 0;
     bool line_was_active = false;
 
+    /* Diagnostico periodico de flancos (para verificar el cableado). */
+    int64_t last_diag_us = esp_timer_get_time();
+    uint32_t diag_edges = 0;
+
     for (;;) {
         const int64_t now_us = esp_timer_get_time();
         const bool active = coin_level_is_active(gpio_get_level(BOARD_COIN_GPIO));
@@ -303,6 +311,23 @@ void coin_acceptor_task(void *arg)
             ESP_LOGW(TAG, "Monedero desarmado: la linea no volvio al reposo");
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
+        }
+
+        /*
+         * Diagnostico: cada 2 s informa si la ISR vio flancos nuevos. Permite
+         * distinguir "el monedero no manda pulsos" de "los pulsos se descartan
+         * por ancho o por falta de armado".
+         */
+        if ((now_us - last_diag_us) >= 2000000) {
+            last_diag_us = now_us;
+            const uint32_t edges = s_isr_edges;
+            if (edges != diag_edges) {
+                ESP_LOGI(TAG, "IO35: %lu flanco(s) nuevo(s), %lu rechazado(s)",
+                         (unsigned long)(edges - diag_edges),
+                         (unsigned long)s_isr_rejected);
+                diag_edges = edges;
+                s_isr_rejected = 0;
+            }
         }
 
         /*

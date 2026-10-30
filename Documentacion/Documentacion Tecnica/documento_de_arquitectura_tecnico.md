@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **613 472 B**, 41 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **613 664 B**, 41 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware

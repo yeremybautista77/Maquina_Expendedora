@@ -10,7 +10,7 @@
 > sube a GitHub al cierre de esta sesión. Pines confirmados, estrategia híbrida
 > de motores, *homing* de M1–M4, NVS, layout Flex 2×3 y cobro diferido por
 > unidad implementados; compila sin errores ni warnings
-> (`maquina_expendedora.bin` = **613 472 B**, 41 % libre).
+> (`maquina_expendedora.bin` = **613 664 B**, 41 % libre).
 > **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
 > XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
 > corregidos (sin inversión). Pendiente: monedero, módulos I2C/motores,
@@ -44,7 +44,7 @@
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**613 472 B**, 41 % libre) y `Firmware/` versionado.
+- [x] Build limpio (**613 664 B**, 41 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -61,7 +61,7 @@
 
 - [x] Expansión del modo administración: inventario, precios mutables en NVS y
       prueba de motores con marca `admin_test`.
-- [x] Build limpio sin warnings → **613 472 B** (`0x95c60`), 41 % libre.
+- [x] Build limpio sin warnings → **613 664 B** (`0x95d20`), 41 % libre.
 - [ ] Flasheo + monitor serie → **no ejecutado**: no hay ningún puerto COM
       presente (placa desconectada o cable solo de carga).
 
@@ -169,7 +169,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
    abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
    el aviso `Espere a que termine el despacho` si hay una compra en curso.
-5. **Build:** **613 472 B** (`0x95c60`), **41 % libre**, sin warnings.
+5. **Build:** **613 664 B** (`0x95d20`), **41 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
