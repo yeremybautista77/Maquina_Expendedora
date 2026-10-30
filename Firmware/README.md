@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **613 664 B**, 41 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **613 872 B**, 41 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos

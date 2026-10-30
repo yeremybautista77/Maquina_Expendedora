@@ -1192,6 +1192,10 @@ static void on_admin_test_clicked(lv_event_t *event)
                  (unsigned)(channel + 1));
         ESP_LOGI(TAG, "Modo administracion: prueba del motor %u encolada",
                  (unsigned)(channel + 1));
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        snprintf(status, sizeof(status),
+                 "Motores no disponibles: conecte los modulos I2C");
+        ESP_LOGW(TAG, "Modo administracion: control de motores no inicializado");
     } else {
         snprintf(status, sizeof(status), "No se pudo encolar la prueba M%u",
                  (unsigned)(channel + 1));
@@ -2546,7 +2550,15 @@ esp_err_t gui_display_confirm_purchase(void)
      */
     const esp_err_t capacity_err = motor_control_check_capacity(batch_count);
     if (capacity_err != ESP_OK) {
-        set_toast_locked("Cola ocupada: reduzca la cantidad");
+        if (capacity_err == ESP_ERR_INVALID_STATE) {
+            /*
+             * motor_control_init() fallo (por ejemplo, PCF8574 sin conectar):
+             * la cola no existe. No es que este llena, es que no hay motores.
+             */
+            set_toast_locked("Motores no disponibles: conecte los modulos I2C");
+        } else {
+            set_toast_locked("Cola ocupada: reduzca la cantidad");
+        }
         s_ui_dirty = true;
         state_unlock();
         ui_notify();
