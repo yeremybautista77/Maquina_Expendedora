@@ -4,7 +4,7 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-10-30
+> **Última actualización:** 2026-11-01
 > **Estado global:** **fase P1 de software completada y modo administración
 > ampliado** (acceso por botón + contraseña, ajuste manual de saldo, inventario
 > y precios mutables en NVS) y se sube a GitHub al cierre de esta sesión. Pines
@@ -14,8 +14,14 @@
 > **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
 > XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
 > corregidos (sin inversión). **Monedero validado en placa** (CH-926, NO + FAST,
-> 1/3/5/7 pulsos = RD$ 1/5/10/25, saldo persistido en NVS). Pendiente: módulos
-> I2C/motores, *homing* y compra completa en la placa real.
+> 1/3/5/7 pulsos = RD$ 1/5/10/25, saldo persistido en NVS). Pendiente: *homing*
+> y compra completa en la placa real.
+>
+> **Montaje actual (2026-11-01):** el expansor de pines (PCF8574) ya está
+> conectado, pero **aún no hay motores**. Solo se montarán **M5 y M6**, que no
+> tienen sensor. Pendiente capturar el arranque para confirmar
+> `Control de motores listo (relees 0x20, sensores 0x21 ...)` y probar el pulso
+> por tiempo de M5/M6 con una compra real.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -203,7 +209,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
 | Monedero (ISR IO35) | ✅ Validado en placa | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25 |
-| Despacho I2C + Mutex | ✅ Implementado | Validar con motores reales |
+| Despacho I2C + Mutex | ✅ Expansor conectado | Validar pulso de M5/M6; M1–M4 sin motores |
 | *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
 | Persistencia NVS | ✅ Implementado | Saldo validado tras reinicio; falta stock/precios |
 | GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |
