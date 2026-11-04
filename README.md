@@ -26,10 +26,10 @@ El funcionamiento es el siguiente:
 - Modo administración por botón `ADM` + contraseña (`0000`): ajuste de saldo, inventario y precios.
 
 **Pendiente:**
-- Validación en hardware real: táctil/calibración, motores, persistencia NVS tras reinicio y modo administración.
+- Validación en hardware real: cableado de los motores M1–M4, compra completa y persistencia de stock/precios.
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
 
-**Build de referencia:** `maquina_expendedora.bin` = **616 224 B** (41 % de la partición de aplicación libre).
+**Build de referencia:** `maquina_expendedora.bin` = **616 944 B** (41 % de la partición de aplicación libre).
 
 ---
 

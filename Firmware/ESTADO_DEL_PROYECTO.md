@@ -4,24 +4,25 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-11-01
+> **Última actualización:** 2026-11-04
 > **Estado global:** **fase P1 de software completada y modo administración
 > ampliado** (acceso por botón + contraseña, ajuste manual de saldo, inventario
 > y precios mutables en NVS) y se sube a GitHub al cierre de esta sesión. Pines
 > confirmados, estrategia híbrida de motores, *homing* de M1–M4, NVS, layout
 > Flex 2×3 y cobro diferido por unidad implementados; compila sin errores ni
-> warnings (`maquina_expendedora.bin` = **616 224 B**, 41 % libre).
+> warnings (`maquina_expendedora.bin` = **616 944 B**, 41 % libre).
 > **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
 > XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
 > corregidos (sin inversión). **Monedero validado en placa** (CH-926, NO + FAST,
 > 1/3/5/7 pulsos = RD$ 1/5/10/25, saldo persistido en NVS). Pendiente: *homing*
 > y compra completa en la placa real.
 >
-> **Montaje actual (2026-11-01):** el expansor de pines (PCF8574) ya está
-> conectado, pero **aún no hay motores**. Solo se montarán **M5 y M6**, que no
-> tienen sensor. Pendiente capturar el arranque para confirmar
-> `Control de motores listo (relees 0x20, sensores 0x21 ...)` y probar el pulso
-> por tiempo de M5/M6 con una compra real.
+> **Montaje actual (2026-11-04):** el expansor de pines (PCF8574) ya está
+> conectado y llegaron los **4 motores con sensor** (M1–M4); quedan pendientes
+> de cablear. M5 y M6 son por tiempo (~2.0 s). El firmware ya tiene M1–M4 en
+> bucle cerrado (homing, arranque 3 s y vuelta 20 s) y añade el diagnóstico
+> `Sensores 0x21: M1..M4 = 0xX` al arrancar. Pendiente: conectar todo, validar
+> el divisor de cada sensor y probar una compra real.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -52,7 +53,7 @@
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**616 224 B**, 41 % libre) y `Firmware/` versionado.
+- [x] Build limpio (**616 944 B**, 41 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
@@ -70,7 +71,7 @@
 - [x] Modo administración rediseñado: botón `ADM` + contraseña `0000`, ajuste
       manual de saldo (± RD$ 1/5/10/25) y eliminación de la prueba de motores
       del panel.
-- [x] Build limpio sin warnings → **616 224 B** (`0x96920`), 41 % libre.
+- [x] Build limpio sin warnings → **616 944 B** (`0x969f0`), 41 % libre.
 - [x] Flasheo por COM5 y validación del monedero CH-926 en placa.
 
 ---
@@ -177,7 +178,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Guardas de seguridad:** los tests se rechazan si hay pedido activo, modal
    abierto, motor/cola ocupados o stock 0. El guardado de precios se rechaza con
    el aviso `Espere a que termine el despacho` si hay una compra en curso.
-5. **Build:** **616 224 B** (`0x96920`), **41 % libre**, sin warnings.
+5. **Build:** **616 944 B** (`0x969f0`), **41 % libre**, sin warnings.
 
 ### Rediseño del acceso administrador (2026-10-30)
 
@@ -197,7 +198,26 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 4. **Sin prueba de motores:** se eliminaron la sección `Prueba de Motores`, los
    botones `Test M1`…`Test M6` y el callback `on_admin_test_clicked`. El soporte
    `admin_test` permanece en `motor_control.c`/`main.c`, pero la GUI ya no lo usa.
-5. **Build:** **616 224 B** (`0x96920`), **41 % libre**, sin warnings.
+5. **Build:** **616 944 B** (`0x969f0`), **41 % libre**, sin warnings.
+
+### Motores M1–M4 y diagnóstico de sensores (2026-11-04)
+
+1. **Motores recibidos:** los 4 motores de 3 hilos (salida, alimentación y
+   sensor) ya están en poder del usuario; M1–M4 quedan listos para cablear en
+   bucle cerrado. M5 y M6 siguen por tiempo (~2.0 s).
+2. **Código ya habilitado:** `BOARD_SENSOR_CHANNEL_COUNT = 4`,
+   `MOTOR_SENSOR_CHANNEL_COUNT = 4` y los `_Static_assert` garantizan el
+   alineamiento. El homing y el despacho con sensor nunca estuvieron
+   desactivados; no hizo falta cambiar la lógica de control.
+3. **Diagnóstico nuevo:** tras el homing, `motor_control_init()` lee `0x21` y
+   registra `Sensores 0x21: M1..M4 = 0xX (1 = reposo, 0 = fuera de reposo)`.
+   Sirve para verificar el cableado y el divisor 10 kΩ / 3.3 kΩ de cada motor.
+4. **Verificación de hardware:** antes de conectar el divisor hay que medir el
+   tercer hilo del motor. Si es un micro-switch de 12 V se usa el divisor; si es
+   un sensor de 3.3 V o 5 V se conecta directo y se ajusta `SENSOR_HOME_LEVEL`.
+   Documentado en `Diseño_electronico/ARQUITECTURA_HARDWARE.md` §3.3.1 y en la
+   arquitectura técnica §4.1.
+5. **Build:** **616 944 B** (`0x969f0`), **41 % libre**, sin warnings.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -209,7 +229,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
 | Monedero (ISR IO35) | ✅ Validado en placa | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25 |
-| Despacho I2C + Mutex | ✅ Expansor conectado | Validar pulso de M5/M6; M1–M4 sin motores |
+| Despacho I2C + Mutex | ✅ Expansor conectado | Motores M1–M4 recibidos; validar cableado y compra real |
 | *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
 | Persistencia NVS | ✅ Implementado | Saldo validado tras reinicio; falta stock/precios |
 | GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |

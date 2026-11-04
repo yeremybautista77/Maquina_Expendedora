@@ -369,6 +369,21 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
      */
     (void)motor_control_home_all();
 
+    /*
+     * Diagnostico de cableado de los fines de carrera. El PCF8574 devuelve el
+     * nivel fisico de P0..P7: con el divisor 10 kOhm / 3.3 kOhm el reposo de
+     * M1..M4 es HIGH (bit = 1) y el switch abierto deja el bit en 0. P4..P7 no
+     * tienen conexion y suelen leerse HIGH por el pull-up interno.
+     */
+    uint8_t sensor_mask = 0;
+    if (motor_control_read_sensors(&sensor_mask) == ESP_OK) {
+        ESP_LOGI(TAG,
+                 "Sensores 0x%02X: M1..M4 = 0x%X (1 = reposo, 0 = fuera de reposo)",
+                 BOARD_I2C_ADDR_SENSOR, (unsigned)(sensor_mask & 0x0Fu));
+    } else {
+        ESP_LOGW(TAG, "No se pudo leer el PCF8574 de sensores para diagnostico");
+    }
+
     return ESP_OK;
 
 fail:

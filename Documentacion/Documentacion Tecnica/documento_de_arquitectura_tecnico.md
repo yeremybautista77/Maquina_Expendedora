@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **616 224 B**, 41 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **616 944 B**, 41 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -44,6 +44,13 @@ Se emplean dos módulos expansores PCF8574 en paralelo al puerto *I2C Peripheral
 El divisor entrega **12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) ≈ 2.97 V**, por debajo de los 3.3V del PCF8574 y por encima de su umbral de nivel alto. En reposo el switch cierra y la entrada se lee **HIGH**; cuando el mecanismo gira, el switch abre y la resistencia de 3.3 kΩ lleva la entrada a **LOW**. La placa **LK20052 se mantiene intacta: no se cortan pistas**.
 
 La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con esta topología vale `1` (reposo HIGH); si el cableado invierte la señal, se cambia a `0` sin modificar el circuito.
+
+> **Verificación obligatoria antes de conectar los 4 motores nuevos (2026-11-04).** El divisor presupone que el tercer hilo del motor es un **micro-switch que conmuta 12 V**. Mide ese hilo contra GND con el motor alimentado y el mecanismo en reposo:
+>
+> *   **≈ 12 V** → usar el divisor 10 kΩ / 3.3 kΩ descrito.
+> *   **3.3 V o 5 V** (sensor Hall/óptico) → **no** usar el divisor: conectar la señal directa a P0–P3 de `0x21` y ajustar `SENSOR_HOME_LEVEL`. Un sensor de 5 V requiere comprobar el umbral V<sub>IH</sub> del PCF8574 o intercalar un divisor adecuado.
+>
+> Con los cuatro motores en reposo, el arranque debe registrar `Sensores 0x21: M1..M4 = 0xF`; al accionar cada switch su bit pasa a 0. Si un sensor de 3.3 V se conecta a través del divisor de 12 V, la entrada queda en ≈ 0.8 V y el canal se bloquea como "fuera de reposo".
 
 **M5–M6 — lazo abierto.** Los motores LK20052 Fy-007 son de 2 hilos y no incorporan sensor. El firmware energiza el relé del canal en `0x20` durante un **pulso calibrado de ~2.0 s** y lo desenergiza. Las entradas **P4 y P5 del expansor `0x21` no reciben conexión física** y el firmware no las lee.
 

@@ -1,6 +1,6 @@
 # Arquitectura de Hardware — Máquina Expendedora Automática de 6 Canales
 
-**Versión 1.2 · 28 de octubre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
+**Versión 1.3 · 4 de noviembre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
 
 > **Nota de alcance.** Este documento describe exclusivamente el dominio físico del sistema: voltajes, corrientes, estados lógicos, protecciones, conectores y topología de interconexión. El comportamiento del sistema y la lógica de control se documentan por separado.
 
@@ -347,6 +347,15 @@ La resistencia de **3.3 kΩ** cumple dos funciones simultáneas: es la rama infe
 
 > **⚠️ Nota de diseño — Placa LK20052 intacta.** No se corta ninguna pista de cobre ni se compra un módulo acondicionador adicional. Los cuatro divisores se montan externamente (placa perforada pequeña o dentro del mazo) y se conectan entre el hilo de señal de cada motor y el puerto P0–P3 del expansor `0x21`.
 
+> **⚠️ Verificación obligatoria antes de conectar los motores nuevos (2026-11-04).** El divisor 10 kΩ / 3.3 kΩ presupone que el tercer hilo del motor es un **micro-switch que conmuta los 12 V** del propio motor. Antes de cablear:
+>
+> 1. Alimenta el motor a 12 V y mide el tercer hilo (señal) contra GND con el mecanismo **en reposo**.
+> 2. Si entrega **≈ 12 V** → usa el divisor 10 kΩ en serie + 3.3 kΩ a GND tal como se describe.
+> 3. Si entrega **3.3 V o 5 V** (sensor Hall/óptico) → **no** uses el divisor de 12 V: conecta la señal directa a P0–P3 de `0x21` y ajusta `SENSOR_HOME_LEVEL` al nivel de reposo real. Un sensor de 5 V exige comprobar el umbral V<sub>IH</sub> del PCF8574 a 3.3 V o intercalar un divisor adecuado.
+> 4. Con los cuatro motores en reposo, el log de arranque debe mostrar `Sensores 0x21: M1..M4 = 0xF` (los cuatro bits en HIGH). Al accionar cada micro-switch, su bit debe pasar a 0.
+>
+> Conectar un sensor de 3.3 V a través del divisor de 12 V dejaría la señal en ≈ 0.8 V y el firmware la leería siempre como "fuera de reposo", bloqueando el despacho de ese canal.
+
 **Abstracción de la polaridad en firmware.** La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con el divisor descrito, el reposo es **HIGH** y la macro vale `1`. Si en el montaje final la señal se invierte (por ejemplo, por un cambio de switch o de cableado), basta cambiar la macro a `0` para que el firmware interprete el reposo en LOW, sin modificar el circuito ni volver a cablear.
 
 **Límites de tiempo en firmware (M1–M4).** El *homing* de arranque usa `MOTOR_HOMING_TIMEOUT_MS` = 10 s por canal. Durante un despacho, el firmware concede 3 s (`MOTOR_START_TIMEOUT_MS`) para que el motor abandone el reposo y hasta 20 s (`MOTOR_TRAVEL_TIMEOUT_MS`) para que complete la vuelta. En ambos casos el relé se desenergiza al vencer el plazo, como protección térmica del motor y del cableado.
@@ -661,4 +670,4 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 
 ---
 
-*Documento de hardware — versión 1.2. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*
+*Documento de hardware — versión 1.3. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*

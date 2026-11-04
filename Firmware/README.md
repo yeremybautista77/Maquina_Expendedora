@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **616 224 B**, 41 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **616 944 B**, 41 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -167,7 +167,7 @@ Firmware/
 
 ## Pendiente (iterativo)
 
-1. Validar en placa el monedero, los módulos I2C/motores y el modo
-   administración completo (saldo, inventario y precios). El táctil ya está
-   calibrado (`BOARD_TOUCH_MIRROR_X = 0`, `MIRROR_Y = 1`).
+1. Cablear los 4 motores M1–M4 (sensor por divisor 10 kΩ / 3.3 kΩ), verificar
+   `Sensores 0x21: M1..M4 = 0xF` y probar una compra real. Monedero, táctil y
+   expansor ya están validados en placa.
 2. Telemetría Wi-Fi y audio (V2.0).
