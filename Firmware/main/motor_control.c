@@ -371,14 +371,15 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
 
     /*
      * Diagnostico de cableado de los fines de carrera. El PCF8574 devuelve el
-     * nivel fisico de P0..P7: con el divisor 10 kOhm / 3.3 kOhm el reposo de
-     * M1..M4 es HIGH (bit = 1) y el switch abierto deja el bit en 0. P4..P7 no
-     * tienen conexion y suelen leerse HIGH por el pull-up interno.
+     * nivel fisico de P0..P7. Verificado en banco: en transito el micro-switch
+     * entrega 12 V y el divisor deja ~2.97 V (bit = 1); en Home la senal cae a
+     * 0 V (bit = 0) durante el pulso de fin de carrera. P4..P7 no tienen
+     * conexion y suelen leerse HIGH por el pull-up interno.
      */
     uint8_t sensor_mask = 0;
     if (motor_control_read_sensors(&sensor_mask) == ESP_OK) {
         ESP_LOGI(TAG,
-                 "Sensores 0x%02X: M1..M4 = 0x%X (1 = reposo, 0 = fuera de reposo)",
+                 "Sensores 0x%02X: M1..M4 = 0x%X (0 = Home/LOW, 1 = transito/HIGH)",
                  BOARD_I2C_ADDR_SENSOR, (unsigned)(sensor_mask & 0x0Fu));
     } else {
         ESP_LOGW(TAG, "No se pudo leer el PCF8574 de sensores para diagnostico");
@@ -476,6 +477,11 @@ esp_err_t motor_control_read_sensor(uint8_t channel, bool *out_triggered)
     }
 
     const bool pin_high = ((mask >> channel) & 0x01u) != 0u;
+    /*
+     * Home verificado en banco: el micro-switch cae a 0 V al completar la
+     * vuelta, por lo que SENSOR_HOME_LEVEL = 0 marca `triggered` cuando el bit
+     * de 0x21 vale 0. En transito (12 V) el bit vale 1 y triggered = false.
+     */
     *out_triggered = pin_high == (SENSOR_HOME_LEVEL != 0);
     return ESP_OK;
 }

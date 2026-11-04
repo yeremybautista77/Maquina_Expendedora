@@ -15,8 +15,11 @@
  *        0x20 -> modulo de relees (motores de 12 V), activo en LOW
  *        0x21 -> sensores de fin de carrera SOLO en P0..P3 (M1..M4). La salida
  *                de 12 V del micro-switch se escala con un divisor externo de
- *                10 kOhm en serie y 3.3 kOhm a GND (~2.97 V). La placa LK20052
- *                queda intacta: no se cortan pistas.
+ *                10 kOhm en serie y 3.3 kOhm a GND (~2.97 V). Verificado en
+ *                banco (2026-11-04): en transito el switch entrega 12 V
+ *                (~2.97 V, HIGH) y en Home cae a 0 V (LOW) durante el pulso
+ *                de fin de carrera. La placa LK20052 queda intacta: no se
+ *                cortan pistas.
  *        P4/P5 de 0x21 no tienen conexion fisica: M5 y M6 (LK20052 Fy-007, de
  *        2 hilos) se despachan en lazo abierto con un pulso temporizado.
  *  - Pantalla TFT ST7796 de 320x480 (vertical) por SPI dedicado (HSPI/SPI2).
@@ -65,17 +68,18 @@ extern "C" {
  *  Estrategia hibrida de motores
  *
  *  M1..M4 (3 hilos, LK20052): micro-switch de 12 V acondicionado con divisor
- *  10 kOhm / 3.3 kOhm. En reposo el switch entrega 12 V y el divisor deja
- *  ~2.97 V en el pin del PCF8574, por lo que el reposo se lee HIGH.
- *  SENSOR_HOME_LEVEL abstrae esa polaridad: cambiarla a 0 invierte la
- *  interpretacion sin tocar el circuito.
+ *  10 kOhm / 3.3 kOhm. Verificado fisicamente en banco (2026-11-04): mientras
+ *  el motor gira (transito) el switch entrega 12 V y el divisor deja ~2.97 V
+ *  (HIGH); al llegar a Home la senal cae a 0 V (LOW) durante el pulso de fin
+ *  de carrera. Por eso el reposo se lee LOW. SENSOR_HOME_LEVEL abstrae esa
+ *  polaridad: cambiarla a 1 invierte la interpretacion sin tocar el circuito.
  *
  *  M5..M6 (2 hilos, LK20052 Fy-007): sin sensor ni homing. Se aplica un pulso
  *  calibrado de BOARD_TIMED_PULSE_MS al rele correspondiente de 0x20.
  * ========================================================================== */
 #define BOARD_SENSOR_CHANNEL_COUNT  4       /* Canales M1..M4 con retroalimentacion */
 #define BOARD_TIMED_CHANNEL_FIRST   4       /* Primer canal por tiempo (M5) */
-#define SENSOR_HOME_LEVEL           1       /* 1 = reposo HIGH (~2.97 V) | 0 = reposo LOW */
+#define SENSOR_HOME_LEVEL           0       /* 0 = Home LOW (0 V, verificado) | 1 = Home HIGH */
 #define BOARD_TIMED_PULSE_MS        2000    /* Pulso calibrado en lazo abierto */
 
 /* ==========================================================================

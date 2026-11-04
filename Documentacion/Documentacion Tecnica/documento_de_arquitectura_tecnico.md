@@ -1,7 +1,7 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **616 944 B**, 41 % de la partición libre).
+> Build limpio (`maquina_expendedora.bin` = **616 960 B**, 41 % de la partición libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
 
 ## 1. Plataforma de Desarrollo y Firmware
@@ -41,16 +41,16 @@ Se emplean dos módulos expansores PCF8574 en paralelo al puerto *I2C Peripheral
 *   **10 kΩ en serie** entre la salida del switch y el puerto Pn del expansor.
 *   **3.3 kΩ entre el puerto Pn y GND**, que actúa además como pull-down.
 
-El divisor entrega **12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) ≈ 2.97 V**, por debajo de los 3.3V del PCF8574 y por encima de su umbral de nivel alto. En reposo el switch cierra y la entrada se lee **HIGH**; cuando el mecanismo gira, el switch abre y la resistencia de 3.3 kΩ lleva la entrada a **LOW**. La placa **LK20052 se mantiene intacta: no se cortan pistas**.
+El divisor entrega **12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) ≈ 2.97 V**, por debajo de los 3.3V del PCF8574 y por encima de su umbral de nivel alto. Verificado en banco el **2026-11-04**: mientras el motor gira (tránsito) el switch cierra y la entrada se lee **HIGH**; al llegar a Home la señal cae a **0 VDC** durante el pulso de fin de carrera y la resistencia de 3.3 kΩ lleva la entrada a **LOW**. La placa **LK20052 se mantiene intacta: no se cortan pistas**.
 
-La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con esta topología vale `1` (reposo HIGH); si el cableado invierte la señal, se cambia a `0` sin modificar el circuito.
+La interpretación del nivel de Home se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con esta topología vale `0` (Home LOW); si el cableado invierte la señal, se cambia a `1` sin modificar el circuito.
 
-> **Verificación obligatoria antes de conectar los 4 motores nuevos (2026-11-04).** El divisor presupone que el tercer hilo del motor es un **micro-switch que conmuta 12 V**. Mide ese hilo contra GND con el motor alimentado y el mecanismo en reposo:
+> **Verificación física en banco (2026-11-04).** Los cuatro motores LK20052 de 3 hilos se probaron alimentados a 12 V, midiendo el tercer hilo contra GND:
 >
-> *   **≈ 12 V** → usar el divisor 10 kΩ / 3.3 kΩ descrito.
-> *   **3.3 V o 5 V** (sensor Hall/óptico) → **no** usar el divisor: conectar la señal directa a P0–P3 de `0x21` y ajustar `SENSOR_HOME_LEVEL`. Un sensor de 5 V requiere comprobar el umbral V<sub>IH</sub> del PCF8574 o intercalar un divisor adecuado.
+> *   **Motor girando (tránsito):** 12 VDC → divisor 10 kΩ / 3.3 kΩ → ≈ 2.97 V → `0x21` lee **HIGH** (bit = 1).
+> *   **Motor en Home:** 0 VDC durante el pulso de fin de carrera → divisor → 0 V (pull-down) → `0x21` lee **LOW** (bit = 0).
 >
-> Con los cuatro motores en reposo, el arranque debe registrar `Sensores 0x21: M1..M4 = 0xF`; al accionar cada switch su bit pasa a 0. Si un sensor de 3.3 V se conecta a través del divisor de 12 V, la entrada queda en ≈ 0.8 V y el canal se bloquea como "fuera de reposo".
+> El firmware interpreta Home en LOW con `SENSOR_HOME_LEVEL = 0`. Cada motor detenido en Home debe registrar su bit en 0; al accionar la leva (o mientras gira) el bit pasa a 1. Si un sensor de 3.3 V o 5 V se conectara a través del divisor de 12 V, la entrada quedaría en ≈ 0.8 V y se leería siempre como tránsito, bloqueando el canal.
 
 **M5–M6 — lazo abierto.** Los motores LK20052 Fy-007 son de 2 hilos y no incorporan sensor. El firmware energiza el relé del canal en `0x20` durante un **pulso calibrado de ~2.0 s** y lo desenergiza. Las entradas **P4 y P5 del expansor `0x21` no reciben conexión física** y el firmware no las lee.
 
@@ -136,7 +136,7 @@ El modo administración es una herramienta de mantenimiento para el operador. No
 Al final de `motor_control_init()` se ejecuta `motor_control_home_all()` **antes** de crear `task_despacho`:
 
 *   Recorre únicamente los canales **M1–M4**, que son los que tienen sensor (`PCF8574` en `0x21`, pines P0–P3). **P4 y P5 no se leen** porque M5 y M6 no tienen retroalimentación.
-*   Si el canal ya está en reposo (nivel igual a `SENSOR_HOME_LEVEL`, por defecto HIGH), no hace nada.
+*   Si el canal ya está en Home (nivel igual a `SENSOR_HOME_LEVEL`, por defecto LOW), no hace nada.
 *   Si está fuera de reposo, toma `g_dispatch_mutex`, energiza su relé (`PCF8574` en `0x20`) y espera hasta que el sensor alcance el nivel de reposo o venza el **timeout de 10 s por canal**.
 *   El relé se apaga **siempre**, incluso ante timeout o error, y se deja una pausa de asentamiento de 250 ms.
 *   El proceso es **secuencial, canal por canal**: nunca hay dos motores alimentados a la vez. Si un canal no alcanza el reposo, se registra el error y se continúa con el siguiente para no bloquear el arranque.

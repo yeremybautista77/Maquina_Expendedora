@@ -5,7 +5,7 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
 > **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **616 944 B**, 41 % libre).
+> errores ni warnings (`maquina_expendedora.bin` = **616 960 B**, 41 % libre).
 > Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
 
 ## Requisitos
@@ -131,9 +131,11 @@ Firmware/
 - **Monedero:** RD$ 1 = 1 pulso, RD$ 5 = 3, RD$ 10 = 5, RD$ 25 = 7. La ISR solo
   encola; la tarea cierra la ráfaga tras 300 ms de silencio y acredita el saldo.
 - **Motores híbridos:** M1–M4 (LK20052 de 3 hilos) usan micro-switch de fin de
-  carrera acondicionado con un divisor 10 kΩ / 3.3 kΩ; el reposo se lee HIGH
-  (`SENSOR_HOME_LEVEL = 1`). Secuencia: verificar reposo → energizar → esperar
-  salida de reposo → esperar retorno → apagar siempre → liberar Mutex.
+  carrera acondicionado con un divisor 10 kΩ / 3.3 kΩ. Verificado en banco
+  (2026-11-04): en tránsito la señal es 12 V (HIGH ≈ 2.97 V tras el divisor) y
+  en Home cae a 0 V (LOW), por lo que Home se lee LOW
+  (`SENSOR_HOME_LEVEL = 0`). Secuencia: verificar Home → energizar → esperar
+  salida de Home → esperar retorno → apagar siempre → liberar Mutex.
   M5–M6 (LK20052 Fy-007 de 2 hilos) no tienen sensor: se aplica un pulso
   calibrado de ~2.0 s y se apaga el relé.
 - ***Homing* al arrancar:** solo M1–M4. Lee P0–P3 de `0x21` y, si un canal está
@@ -168,6 +170,6 @@ Firmware/
 ## Pendiente (iterativo)
 
 1. Cablear los 4 motores M1–M4 (sensor por divisor 10 kΩ / 3.3 kΩ), verificar
-   `Sensores 0x21: M1..M4 = 0xF` y probar una compra real. Monedero, táctil y
-   expansor ya están validados en placa.
+   `Sensores 0x21: M1..M4 = 0x0` con los canales en Home (LOW) y probar una
+   compra real. Monedero, táctil y expansor ya están validados en placa.
 2. Telemetría Wi-Fi y audio (V2.0).

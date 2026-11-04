@@ -1,6 +1,6 @@
 # Arquitectura de Hardware — Máquina Expendedora Automática de 6 Canales
 
-**Versión 1.3 · 4 de noviembre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
+**Versión 1.4 · 4 de noviembre de 2026 · Placa base Hosyond 4.0" (ESP32-32E)**
 
 > **Nota de alcance.** Este documento describe exclusivamente el dominio físico del sistema: voltajes, corrientes, estados lógicos, protecciones, conectores y topología de interconexión. El comportamiento del sistema y la lógica de control se documentan por separado.
 
@@ -62,7 +62,7 @@ graph TD
     RELAYS -->|"12 V conmutado"| MOTORS_S
     RELAYS -->|"12 V conmutado"| MOTORS_T
     MOTORS_S -->|"señal 12 V"| DIV
-    DIV -->|"≈ 2.97 V · HIGH en reposo"| M21
+    DIV -->|"≈ 2.97 V · HIGH en tránsito / 0 V · LOW en Home"| M21
     M20 -->|"P0…P5 · activo LOW"| RELAYS
 
     COIN -->|"pulso 12 V"| OPTO
@@ -236,19 +236,19 @@ graph LR
 
 ### 3.1 Convención industrial Active LOW
 
-Toda la máquina adopta la convención **activo en nivel BAJO**: el estado de reposo es nivel alto y la activación se produce al llevar la señal a 0 V (GND).
+Toda la máquina adopta la convención **activo en nivel BAJO**: la señal se activa al llevarla a 0 V (GND). En el monedero y en las entradas de relé el estado inactivo es nivel alto; en los fines de carrera la señal se activa (LOW) al alcanzar la posición de Home, polaridad verificada físicamente en banco el 2026-11-04.
 
-| Señal | Estado en reposo | Estado activo | Mecanismo físico |
+| Señal | Estado inactivo | Estado activo | Mecanismo físico |
 | :--- | :--- | :--- | :--- |
 | **Pulso de monedero (IO35)** | HIGH ≈ 3.3 V | LOW ≤ 0.4 V | Optoacoplador conduce y hunde la línea |
-| **Fin de carrera (0x21, M1–M4)** | HIGH ≈ 2.97 V (en reposo) | LOW ≈ 0 V (fuera de reposo) | El micro-switch abre la señal de 12 V y el divisor la lleva a 0 V |
+| **Fin de carrera (0x21, M1–M4)** | HIGH ≈ 2.97 V (motor en tránsito) | LOW ≈ 0 V (Home alcanzado) | En tránsito el micro-switch cierra y entrega 12 V; en Home abre la señal y el pull-down la lleva a 0 V |
 | **Entrada de relé (0x20)** | HIGH ≈ 3.3 V | LOW ≤ 0.4 V | LED del opto interno conduce y excita la bobina |
 
 **Ventajas de esta convención:**
 
-- **Inmunidad al ruido.** Un cable desconectado o una soldadura fría tienden a quedar en alto por el pull-up, no a generar activaciones falsas.
+- **Inmunidad al ruido.** Las líneas con pull-up (monedero y entradas de relé) tienden a quedar en alto si el cable se desconecta, no a generar activaciones falsas. En los sensores, el pull-down de 3.3 kΩ fija el nivel y evita entradas flotantes.
 - **Compatibilidad con salidas open-collector / open-drain.** El monedero y los expansores PCF8574 hunden corriente a GND; no necesitan entregar tensión.
-- **Seguridad ante fallo.** En los canales con sensor, un cable abierto o un switch que no cierra deja la entrada en LOW (fuera de reposo) y el motor se detiene por límite de tiempo en lugar de girar indefinidamente. En los relés, la pérdida de la señal de control deja la bobina desenergizada y el motor apagado.
+- **Seguridad ante fallo.** En los canales con sensor, un cable abierto deja la entrada en LOW por el pull-down. Con la polaridad verificada (Home = LOW) el firmware lo interpreta como Home y el despacho se bloquea en el timeout de arranque de 3 s, apagando el relé: no hay giro indefinido. En los relés, la pérdida de la señal de control deja la bobina desenergizada y el motor apagado.
 - **Estandarización.** Todo el sistema se diagnostica con la misma regla: **0 V = activo**.
 
 ### 3.2 Monedero CH-926 con optoacoplador PC817
@@ -320,7 +320,7 @@ graph LR
     R1 --> NODE(("Pn · 0x21"))
     NODE --> R2["R pull-down<br/>3.3 kΩ · 1/4 W"]
     R2 --> GND["GND lógico"]
-    NODE -->|"≈ 2.97 V en reposo"| PCF["PCF8574 · 0x21"]
+    NODE -->|"≈ 2.97 V en tránsito / 0 V en Home"| PCF["PCF8574 · 0x21"]
 ```
 
 **Cálculo del divisor:**
@@ -340,23 +340,21 @@ graph LR
 
 | Estado del mecanismo | Micro-switch | Puerto Pn | Nivel lógico |
 | :--- | :--- | :---: | :---: |
-| **En reposo** (fin de carrera alcanzado) | Cerrado, entrega 12 V | ≈ 2.97 V | **HIGH** |
-| **Fuera de reposo** (girando) | Abierto | 0 V por la resistencia a GND | **LOW** |
+| **En tránsito** (motor girando) | Cerrado, entrega 12 V | ≈ 2.97 V | **HIGH** |
+| **Home** (fin de carrera alcanzado) | Abierto durante el pulso de la leva | 0 V por la resistencia a GND | **LOW** |
 
-La resistencia de **3.3 kΩ** cumple dos funciones simultáneas: es la rama inferior del divisor y, al mismo tiempo, actúa como **pull-down** que fija 0 V cuando el switch se abre. Así, la entrada del expansor nunca queda flotante y un cable abierto se interpreta como "fuera de reposo" (estado seguro).
+La resistencia de **3.3 kΩ** cumple dos funciones simultáneas: es la rama inferior del divisor y, al mismo tiempo, actúa como **pull-down** que fija 0 V cuando el switch se abre. Así, la entrada del expansor nunca queda flotante y el pulso de Home se lee como LOW. Como el pulso de fin de carrera es breve, el firmware muestrea el puerto cada 10 ms y desenergiza el relé en cuanto detecta el bit en 0.
 
 > **⚠️ Nota de diseño — Placa LK20052 intacta.** No se corta ninguna pista de cobre ni se compra un módulo acondicionador adicional. Los cuatro divisores se montan externamente (placa perforada pequeña o dentro del mazo) y se conectan entre el hilo de señal de cada motor y el puerto P0–P3 del expansor `0x21`.
 
-> **⚠️ Verificación obligatoria antes de conectar los motores nuevos (2026-11-04).** El divisor 10 kΩ / 3.3 kΩ presupone que el tercer hilo del motor es un **micro-switch que conmuta los 12 V** del propio motor. Antes de cablear:
+> **✅ Verificación física en banco (2026-11-04).** Los cuatro motores LK20052 de 3 hilos se probaron alimentados a 12 V, midiendo el tercer hilo (señal) contra GND:
 >
-> 1. Alimenta el motor a 12 V y mide el tercer hilo (señal) contra GND con el mecanismo **en reposo**.
-> 2. Si entrega **≈ 12 V** → usa el divisor 10 kΩ en serie + 3.3 kΩ a GND tal como se describe.
-> 3. Si entrega **3.3 V o 5 V** (sensor Hall/óptico) → **no** uses el divisor de 12 V: conecta la señal directa a P0–P3 de `0x21` y ajusta `SENSOR_HOME_LEVEL` al nivel de reposo real. Un sensor de 5 V exige comprobar el umbral V<sub>IH</sub> del PCF8574 a 3.3 V o intercalar un divisor adecuado.
-> 4. Con los cuatro motores en reposo, el log de arranque debe mostrar `Sensores 0x21: M1..M4 = 0xF` (los cuatro bits en HIGH). Al accionar cada micro-switch, su bit debe pasar a 0.
+> 1. **Motor girando (tránsito):** el micro-switch entrega **12 VDC** → el divisor 10 kΩ / 3.3 kΩ entrega **≈ 2.97 V** → el PCF8574 `0x21` lee **HIGH** (bit = 1).
+> 2. **Motor en Home:** la señal cae a **0 VDC** durante el pulso de fin de carrera → el divisor entrega **0 V** (fijado por el pull-down de 3.3 kΩ) → el PCF8574 `0x21` lee **LOW** (bit = 0).
 >
-> Conectar un sensor de 3.3 V a través del divisor de 12 V dejaría la señal en ≈ 0.8 V y el firmware la leería siempre como "fuera de reposo", bloqueando el despacho de ese canal.
+> El firmware interpreta Home en LOW con `SENSOR_HOME_LEVEL = 0`. En el arranque, cada motor detenido en Home debe registrar su bit en 0; al accionar la leva (o mientras gira) el bit pasa a 1. Si un sensor de 3.3 V o 5 V se conectara a través del divisor de 12 V, la entrada quedaría en ≈ 0.8 V y se leería siempre como tránsito, bloqueando el canal.
 
-**Abstracción de la polaridad en firmware.** La interpretación del nivel de reposo se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con el divisor descrito, el reposo es **HIGH** y la macro vale `1`. Si en el montaje final la señal se invierte (por ejemplo, por un cambio de switch o de cableado), basta cambiar la macro a `0` para que el firmware interprete el reposo en LOW, sin modificar el circuito ni volver a cablear.
+**Abstracción de la polaridad en firmware.** La interpretación del nivel de Home se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con la topología y la verificación descritas, Home es **LOW** y la macro vale `0`. Si en un montaje futuro la señal se invierte (por ejemplo, por un cambio de switch o de cableado), basta cambiar la macro a `1` para que el firmware interprete Home en HIGH, sin modificar el circuito ni volver a cablear.
 
 **Límites de tiempo en firmware (M1–M4).** El *homing* de arranque usa `MOTOR_HOMING_TIMEOUT_MS` = 10 s por canal. Durante un despacho, el firmware concede 3 s (`MOTOR_START_TIMEOUT_MS`) para que el motor abandone el reposo y hasta 20 s (`MOTOR_TRAVEL_TIMEOUT_MS`) para que complete la vuelta. En ambos casos el relé se desenergiza al vencer el plazo, como protección térmica del motor y del cableado.
 
@@ -552,7 +550,7 @@ El banco está formado por **6 canales de relé con bobina de 12 V**, entradas o
 | **6** | M6 | LK20052 Fy-007 · 2 hilos | P5 | COM6 / NO6 | **Sin conexión** | Tiempo · pulso ~2.0 s |
 | — | — | — | P6 / P7 | — | P4–P7 | No usado |
 
-*Los canales M1–M4 leen el reposo en **HIGH ≈ 2.97 V** (`SENSOR_HOME_LEVEL = 1`) a través del divisor 10 kΩ / 3.3 kΩ. Los canales M5–M6 no tienen retroalimentación: P4 y P5 del expansor `0x21` deben quedar físicamente sin conductor y el firmware no los lee. P6 y P7 de ambos expansores permanecen en nivel alto.*
+*Los canales M1–M4 leen el Home en **LOW ≈ 0 V** (`SENSOR_HOME_LEVEL = 0`); en tránsito la entrada es **HIGH ≈ 2.97 V**, a través del divisor 10 kΩ / 3.3 kΩ. Los canales M5–M6 no tienen retroalimentación: P4 y P5 del expansor `0x21` deben quedar físicamente sin conductor y el firmware no los lee. P6 y P7 de ambos expansores permanecen en nivel alto.*
 
 ### 4.7 Distribución de borneras y conectores
 
@@ -645,7 +643,7 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | Entrada de relé referenciada a 12 V | Sobretensión en PCF8574 y ESP32 | Intercalar optoacoplador o driver ULN2803; usar módulo con entrada compatible con 3.3 V |
 | Pico inductivo del motor | Arco en contactos, reinicio del sistema | Diodo de rueda libre + red RC + desacoplo |
 | Corte de pista incompleto | 12 V sobre el expansor de sensores | **No aplica:** la placa LK20052 se conserva intacta y la señal se escala con el divisor 10 kΩ / 3.3 kΩ |
-| Polaridad de reposo invertida | Homing o despacho rechazado | Ajustar `SENSOR_HOME_LEVEL` (1 = HIGH, 0 = LOW) sin cambiar el circuito |
+| Polaridad de Home invertida | Homing o despacho rechazado | Ajustar `SENSOR_HOME_LEVEL` (0 = Home LOW, 1 = Home HIGH) sin cambiar el circuito |
 | M5–M6 sin retroalimentación | Producto no entregado o doble entrega | Calibrar el pulso de ~2.0 s con el espiral cargado y mantener 12 V estable |
 | Ruido en cables de sensor | Lecturas falsas de fin de carrera | Par trenzado con GND, capacitor de 100 nF en la entrada y divisor de baja impedancia |
 | Caída de tensión en el mazo de 12 V | Arranque débil del motor | 18 AWG y conexiones atornilladas |
@@ -666,8 +664,8 @@ Los marcadores siguientes utilizan rutas relativas a la carpeta `Diseño_electro
 | **V− / COM** | Terminal negativo de referencia de la fuente de 12 V |
 | **Divisor de tensión** | Red de dos resistencias que escala una tensión; aquí convierte 12 V en ≈ 2.97 V |
 | **Lazo abierto** | Control sin retroalimentación: la acción dura un tiempo calibrado |
-| **SENSOR_HOME_LEVEL** | Macro de firmware que define el nivel lógico de reposo (1 = HIGH, 0 = LOW) |
+| **SENSOR_HOME_LEVEL** | Macro de firmware que define el nivel lógico de Home (0 = LOW, 1 = HIGH; valor actual `0`) |
 
 ---
 
-*Documento de hardware — versión 1.3. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*
+*Documento de hardware — versión 1.4. Las figuras 1 a 12 son marcadores pendientes de sustitución por material fotográfico definitivo.*

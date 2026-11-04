@@ -9,7 +9,9 @@
  *     se activa el rele (la placa es activa en LOW, se invierte al escribir).
  *   - Modulo de sensores @ 0x21: SOLO los canales M1..M4 (P0..P3). La salida
  *     de 12 V del micro-switch se escala con un divisor externo de 10 kOhm /
- *     3.3 kOhm (~2.97 V), por lo que el reposo se lee HIGH. La macro
+ *     3.3 kOhm (~2.97 V). Verificado en banco (2026-11-04): en transito el
+ *     switch entrega 12 V (HIGH) y en Home cae a 0 V (LOW) durante el pulso de
+ *     fin de carrera; por eso el reposo se lee LOW. La macro
  *     SENSOR_HOME_LEVEL abstrae esa polaridad y permite invertirla por
  *     software sin modificar el circuito.
  *   - Los canales M5 y M6 son motores de 2 hilos (LK20052 Fy-007) sin sensor.

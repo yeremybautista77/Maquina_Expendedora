@@ -29,7 +29,7 @@ El funcionamiento es el siguiente:
 - Validación en hardware real: cableado de los motores M1–M4, compra completa y persistencia de stock/precios.
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
 
-**Build de referencia:** `maquina_expendedora.bin` = **616 944 B** (41 % de la partición de aplicación libre).
+**Build de referencia:** `maquina_expendedora.bin` = **616 960 B** (41 % de la partición de aplicación libre).
 
 ---
 
@@ -72,7 +72,7 @@ El funcionamiento es el siguiente:
 - **Módulo 1 (dirección 0x20):** Los pines P0–P5 se conectan a las entradas `IN` de los 6 relés (activación).
 - **Módulo 2 (dirección 0x21):** Solo los pines P0–P3 reciben la señal acondicionada de los micro-switches de M1–M4. P4 y P5 quedan **sin conexión** porque M5 y M6 no tienen sensor.
 
-*Nota de acondicionamiento (M1–M4):* La salida de 12V de cada micro-switch se escala con un divisor pasivo de **10 kΩ en serie + 3.3 kΩ a GND**, lo que deja ≈2.97V seguros en el expansor `0x21`. La resistencia de 3.3 kΩ actúa además como pull-down. La placa LK20052 se conserva **intacta: no se cortan pistas**. La interpretación del nivel de reposo se ajusta por software con la macro `SENSOR_HOME_LEVEL` (1 = HIGH, 0 = LOW). Los canales M5–M6 se despachan en lazo abierto con un pulso calibrado de ~2.0 s.
+*Nota de acondicionamiento (M1–M4):* La salida de 12V de cada micro-switch se escala con un divisor pasivo de **10 kΩ en serie + 3.3 kΩ a GND**, lo que deja ≈2.97V seguros en el expansor `0x21`. La resistencia de 3.3 kΩ actúa además como pull-down. La placa LK20052 se conserva **intacta: no se cortan pistas**. Verificado en banco (2026-11-04): en tránsito la señal es 12 V (HIGH ≈ 2.97 V tras el divisor) y en Home cae a 0 V (LOW). La interpretación se ajusta por software con la macro `SENSOR_HOME_LEVEL` (valor actual `0` = Home LOW). Los canales M5–M6 se despachan en lazo abierto con un pulso calibrado de ~2.0 s.
 
 ---
 
