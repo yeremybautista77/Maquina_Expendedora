@@ -1,8 +1,9 @@
 # Arquitectura y Plan de Proyecto: Máquina Expendedora Automática (6 Canales)
 
-> **Estado de implementación:** **Fase P1 (Firmware v1.0) completada en laboratorio.**
-> Build limpio (`maquina_expendedora.bin` = **616 960 B**, 41 % de la partición libre).
-> Pendiente: validación en la placa real (táctil, motores, NVS y modo administración).
+> **Estado de implementación:** **Fase P1 (Firmware v1.0) validada en hardware el 2026-11-04.**
+> Build limpio (`maquina_expendedora.bin` = **611 600 B**, 42 % de la partición libre).
+> Los 6 motores (M1–M6) se probaron físicamente. Pendiente: sensores de posición con el
+> segundo PCF8574 (`0x21`) y resolución del montaje de la MicroSD.
 
 ## 1. Plataforma de Desarrollo y Firmware
 El desarrollo del firmware NO utiliza Arduino IDE debido a sus limitaciones en entornos industriales complejos. Se ejecuta utilizando **ESP-IDF (Espressif IoT Development Framework)**, el estándar de la industria para microcontroladores ESP32, programando en **C nativo**.
@@ -25,45 +26,46 @@ El monedero emite ráfagas secuenciales que son leídas por el pin **IO35** conf
 *   *Lógica del Firmware:* Una tarea en FreeRTOS abre una "ventana de tiempo" al detectar el primer pulso. Utilizando contadores de tiempo (milisegundos), el sistema espera hasta que pasen ~300ms sin nuevos pulsos para asumir que la ráfaga de la moneda insertada terminó, sumar el valor total y actualizar el saldo en la pantalla.
 *   *Protección contra saldo fantasma:* IO35 no tiene pull-up interno y, si el monedero no está conectado, la línea flota. El firmware solo **arma** el monedero cuando la línea lleva 500 ms en reposo (HIGH), descarta pulsos de ancho fuera de 10–150 ms y ignora los primeros 2.5 s tras el arranque. Si la línea se queda en nivel activo, el monedero se desarma y el log pide revisar el pull-up externo de 10 kΩ a 3.3 V.
 
-## 4. Control de Actuadores y Sensores (Bus I2C)
+## 4. Control de Actuadores (Bus I2C)
 
-Se emplean dos módulos expansores PCF8574 en paralelo al puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND).
+Se emplea **un único módulo expansor PCF8574** en el puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND).
 
-### 4.1 Estrategia híbrida de motores
+### 4.1 Estrategia de motores: lazo abierto por tiempo
 
 | Grupo | Canales | Modelo | Hilos | Retroalimentación | Control |
 | :--- | :---: | :--- | :---: | :--- | :--- |
-| **M1–M4** | 1–4 | LK20052 | 3 | Micro-switch de fin de carrera | Bucle cerrado por sensor |
-| **M5–M6** | 5–6 | LK20052 Fy-007 | 2 | Ninguna | Lazo abierto por tiempo |
+| **M1–M6** | 1–6 | LK20052 / LK20052 Fy-007 | 2–3 | Ninguna | Lazo abierto · pulso de 3.0 s |
 
-**M1–M4 — acondicionamiento con divisor de tensión.** El micro-switch de estos motores está referenciado a los 12V del propio motor. Para proteger el expansor `0x21` sin cortar pistas ni añadir módulos, cada canal usa un divisor pasivo:
+Los seis canales usan la misma secuencia:
 
-*   **10 kΩ en serie** entre la salida del switch y el puerto Pn del expansor.
-*   **3.3 kΩ entre el puerto Pn y GND**, que actúa además como pull-down.
+1.  El firmware toma el Mutex de despacho (solo un motor a la vez).
+2.  Escribe el bit del canal en `0x20` en **HIGH (3.3 V)**: el transistor NPN satura y lleva el `IN` del relé a **0 V**; el relé se energiza y el motor recibe 12 V.
+3.  Mantiene el pulso durante **3000 ms** (`MOTOR_TIMED_PULSE_MS`).
+4.  Escribe el bit en **LOW (0 V)**: el NPN queda al corte, el `IN` del relé sube y el motor se detiene.
+5.  Libera el Mutex tras una pausa de asentamiento de 250 ms.
 
-El divisor entrega **12 V × 3.3 kΩ / (10 kΩ + 3.3 kΩ) ≈ 2.97 V**, por debajo de los 3.3V del PCF8574 y por encima de su umbral de nivel alto. Verificado en banco el **2026-11-04**: mientras el motor gira (tránsito) el switch cierra y la entrada se lee **HIGH**; al llegar a Home la señal cae a **0 VDC** durante el pulso de fin de carrera y la resistencia de 3.3 kΩ lleva la entrada a **LOW**. La placa **LK20052 se mantiene intacta: no se cortan pistas**.
+| Paso | Bit en `0x20` | P0…P5 | NPN | Nivel en `IN` | Relé | Motor |
+| :--- | :---: | :---: | :---: | :---: | :--- | :--- |
+| Reposo | 0 | LOW ≈ 0 V | Corte | Alto | Desenergizado | Detenido |
+| Despacho | 1 | HIGH ≈ 3.3 V | Saturado | LOW ≈ 0 V | Energizado | Girando |
+| Fin del pulso | 0 | LOW ≈ 0 V | Corte | Alto | Desenergizado | Detenido |
 
-La interpretación del nivel de Home se centraliza en la macro **`SENSOR_HOME_LEVEL`** (definida en `board_config.h` y aplicada en `motor_control.c`). Con esta topología vale `0` (Home LOW); si el cableado invierte la señal, se cambia a `1` sin modificar el circuito.
+> **Nota de calibración.** Los 3000 ms deben ajustarse con el espiral cargado y la tensión real de la fuente. Al no haber retroalimentación, la repetibilidad depende de la calibración mecánica y de mantener constante la tensión de 12 V.
 
-> **Verificación física en banco (2026-11-04).** Los cuatro motores LK20052 de 3 hilos se probaron alimentados a 12 V, midiendo el tercer hilo contra GND:
->
-> *   **Motor girando (tránsito):** 12 VDC → divisor 10 kΩ / 3.3 kΩ → ≈ 2.97 V → `0x21` lee **HIGH** (bit = 1).
-> *   **Motor en Home:** 0 VDC durante el pulso de fin de carrera → divisor → 0 V (pull-down) → `0x21` lee **LOW** (bit = 0).
->
-> El firmware interpreta Home en LOW con `SENSOR_HOME_LEVEL = 0`. Cada motor detenido en Home debe registrar su bit en 0; al accionar la leva (o mientras gira) el bit pasa a 1. Si un sensor de 3.3 V o 5 V se conectara a través del divisor de 12 V, la entrada quedaría en ≈ 0.8 V y se leería siempre como tránsito, bloqueando el canal.
-
-**M5–M6 — lazo abierto.** Los motores LK20052 Fy-007 son de 2 hilos y no incorporan sensor. El firmware energiza el relé del canal en `0x20` durante un **pulso calibrado de ~2.0 s** y lo desenergiza. Las entradas **P4 y P5 del expansor `0x21` no reciben conexión física** y el firmware no las lee.
+**Configuración física de los relés.** Se usan **6 módulos de 1 canal** (SRD-12VDC-SL-C) con el **jumper `H/L` en LOW**: la entrada `IN` se activa con **LOW (0 V)**. Como el PCF8574 solo hunde corriente de forma fiable, cada canal lleva un **transistor NPN inversor** (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). Así el PCF8574 enciende con **HIGH** y apaga con **LOW**. `BOARD_RELAY_ACTIVE_LOW = 0` y el registro sombra se escribe sin invertir.
 
 ### 4.2 Matriz de canales
 
-| Canal | Motor | Relé de Potencia (Módulo 0x20) | Sensor de Fin de Carrera (Módulo 0x21) | Estrategia |
-| :--- | :---: | :--- | :--- | :--- |
-| **Producto 1** | M1 | Pin P0 | Pin P0 (divisor) | Sensor |
-| **Producto 2** | M2 | Pin P1 | Pin P1 (divisor) | Sensor |
-| **Producto 3** | M3 | Pin P2 | Pin P2 (divisor) | Sensor |
-| **Producto 4** | M4 | Pin P3 | Pin P3 (divisor) | Sensor |
-| **Producto 5** | M5 | Pin P4 | **Sin conexión** | Tiempo ~2.0 s |
-| **Producto 6** | M6 | Pin P5 | **Sin conexión** | Tiempo ~2.0 s |
+| Canal | Motor | Relé de Potencia (Módulo 0x20) | Estrategia |
+| :--- | :---: | :--- | :--- |
+| **Producto 1** | M1 | Pin P0 | Tiempo · pulso 3.0 s |
+| **Producto 2** | M2 | Pin P1 | Tiempo · pulso 3.0 s |
+| **Producto 3** | M3 | Pin P2 | Tiempo · pulso 3.0 s |
+| **Producto 4** | M4 | Pin P3 | Tiempo · pulso 3.0 s |
+| **Producto 5** | M5 | Pin P4 | Tiempo · pulso 3.0 s |
+| **Producto 6** | M6 | Pin P5 | Tiempo · pulso 3.0 s |
+
+*El expansor `0x21` **no está montado todavía**; queda reservado para la siguiente etapa (lectura de sensores de posición con divisores de tensión). P6 y P7 de `0x20` no se usan.*
 
 ## 5. Diseño de la Interfaz Gráfica (GUI)
 
@@ -85,7 +87,7 @@ La pantalla se divide visualmente en una cuadrícula (grid) de **2 columnas por 
 
 Para proteger la fuente conmutada de picos de corriente y caídas de tensión (lo que podría reiniciar el ESP32), el firmware usa **dos Mutex con responsabilidades distintas**:
 
-*   **`g_dispatch_mutex` (recurso físico):** garantiza que **solo gire un motor a la vez**. Se toma antes de energizar un relé y se libera al terminar la vuelta, el pulso temporizado o el timeout. Es compartido por el despacho normal y el *homing*.
+*   **`g_dispatch_mutex` (recurso físico):** garantiza que **solo gire un motor a la vez**. Se toma antes de energizar un relé y se libera al terminar el pulso temporizado o ante un error. Es compartido por el despacho normal y la prueba de bring-up.
 *   **`s_queue_mutex` (cola de despacho):** serializa la validación de capacidad y el encolado del pedido completo.
 
 El encolado es **todo-o-nada**:
@@ -131,16 +133,17 @@ El modo administración es una herramienta de mantenimiento para el operador. No
 *   **Sin prueba de motores:** el panel de administración ya no incluye `Test M1`…`Test M6`. El soporte `admin_test` sigue existiendo en `motor_control.c` y `main.c` por compatibilidad, pero la GUI no lo utiliza.
 *   **Guardas:** el ajuste de saldo, el reset de stock y el guardado de precios se rechazan con `Espere a que termine el despacho` si hay una compra en curso. El botón `ADM` tampoco abre el teclado mientras haya un pedido activo o un modal abierto.
 
-## 9. Homing Secuencial de Arranque
+## 9. Despacho Temporizado y Protección
 
-Al final de `motor_control_init()` se ejecuta `motor_control_home_all()` **antes** de crear `task_despacho`:
+El despacho de cada unidad se ejecuta íntegramente en `motor_control_dispatch_one()`:
 
-*   Recorre únicamente los canales **M1–M4**, que son los que tienen sensor (`PCF8574` en `0x21`, pines P0–P3). **P4 y P5 no se leen** porque M5 y M6 no tienen retroalimentación.
-*   Si el canal ya está en Home (nivel igual a `SENSOR_HOME_LEVEL`, por defecto LOW), no hace nada.
-*   Si está fuera de reposo, toma `g_dispatch_mutex`, energiza su relé (`PCF8574` en `0x20`) y espera hasta que el sensor alcance el nivel de reposo o venza el **timeout de 10 s por canal**.
-*   El relé se apaga **siempre**, incluso ante timeout o error, y se deja una pausa de asentamiento de 250 ms.
-*   El proceso es **secuencial, canal por canal**: nunca hay dos motores alimentados a la vez. Si un canal no alcanza el reposo, se registra el error y se continúa con el siguiente para no bloquear el arranque.
-*   Los canales **M5–M6** no participan del homing: se despachan en lazo abierto con un pulso de ~2.0 s cuando se solicita una unidad.
+1.  Toma `g_dispatch_mutex` (solo un motor a la vez).
+2.  Energiza el relé del canal escribiendo **HIGH (3.3 V)** en el bit correspondiente de `0x20` (satura el NPN y el `IN` del relé va a 0 V).
+3.  Mantiene el pulso durante **3000 ms** (`MOTOR_TIMED_PULSE_MS`).
+4.  Apaga el relé **siempre** en el bloque `cleanup`, incluso si hubo un error de I2C, escribiendo **LOW (0 V)**.
+5.  Espera 250 ms de asentamiento y libera el Mutex.
+
+No existe *homing* ni lectura de sensores en la versión actual: tras un corte de energía el sistema arranca con todos los relés apagados y el pulso vuelve a empezar desde cero en la siguiente venta. Si el bus I2C falla, `motor_control` reporta el error a la GUI y el relé no queda activo de forma indefinida.
 
 ## 10. Escalabilidad (Hardware V2.0)
 

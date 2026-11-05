@@ -11,17 +11,12 @@
  *    ya tiene una resistencia externa de 10 kOhm a 3.3 V, por lo que el firmware
  *    DEBE dejar el pull-up interno DESHABILITADO (no cargar el optoacoplador).
  *    La ISR se dispara por flanco de bajada (senal activa en LOW).
- *  - Los dos PCF8574 comparten el mismo bus I2C (SDA=IO32, SCL=IO25):
- *        0x20 -> modulo de relees (motores de 12 V), activo en LOW
- *        0x21 -> sensores de fin de carrera SOLO en P0..P3 (M1..M4). La salida
- *                de 12 V del micro-switch se escala con un divisor externo de
- *                10 kOhm en serie y 3.3 kOhm a GND (~2.97 V). Verificado en
- *                banco (2026-11-04): en transito el switch entrega 12 V
- *                (~2.97 V, HIGH) y en Home cae a 0 V (LOW) durante el pulso
- *                de fin de carrera. La placa LK20052 queda intacta: no se
- *                cortan pistas.
- *        P4/P5 de 0x21 no tienen conexion fisica: M5 y M6 (LK20052 Fy-007, de
- *        2 hilos) se despachan en lazo abierto con un pulso temporizado.
+ *  - El PCF8574 esta en el bus I2C (SDA=IO32, SCL=IO25):
+ *        0x20 -> 6 modulos de rele de 1 canal (motores de 12 V). Jumper H/L
+ *                fisico en LOW: IN en LOW (0 V) activa el motor.
+ *                Cada canal lleva un transistor NPN inversor entre el
+ *                PCF8574 y el IN del modulo (ver BOARD_RELAY_ACTIVE_LOW).
+ *        El firmware escribe unicamente en 0x20; no hay expansor de sensores.
  *  - Pantalla TFT ST7796 de 320x480 (vertical) por SPI dedicado (HSPI/SPI2).
  *  - Tactil resistivo XPT2046 por SPI, compartiendo el bus de la TFT.
  *  - MicroSD por VSPI (SPI3): CS=5, CLK=18, MISO=19, MOSI=23.
@@ -47,12 +42,18 @@ extern "C" {
 
 /* ==========================================================================
  *  Monedero (Seccion 2 y 3 del documento de arquitectura)
+ *
+ *  En esta version NO se usa monedero fisico: el saldo se carga desde el
+ *  panel de administracion (ADM). Se deja el driver compilado pero la placa
+ *  no inicializa IO35, evitando creditos fantasma por la linea flotante.
  * ========================================================================== */
+#define BOARD_COIN_ACCEPTOR_ENABLED 0
+
 #define BOARD_COIN_GPIO             GPIO_NUM_35
 #define BOARD_COIN_ACTIVE_LOW       1       /* Optoacoplador PC817 -> flanco de bajada */
 
 /* ==========================================================================
- *  Bus I2C y expansores PCF8574 (Seccion 4)
+ *  Bus I2C y expansor PCF8574 (Seccion 4)
  * ========================================================================== */
 #define BOARD_I2C_PORT              I2C_NUM_0
 #define BOARD_I2C_SDA_GPIO          GPIO_NUM_32   /* Confirmado: SDA */
@@ -60,27 +61,45 @@ extern "C" {
 #define BOARD_I2C_CLOCK_HZ          100000         /* 100 kHz: robusto con cables largos */
 
 #define BOARD_I2C_ADDR_RELAY        0x20    /* PCF8574: P0..P5 -> relees de motor */
-#define BOARD_I2C_ADDR_SENSOR       0x21    /* PCF8574: P0..P3 -> fines de carrera M1..M4 */
 
-#define BOARD_RELAY_ACTIVE_LOW      1       /* Modulo de relees tipico activo en LOW */
+/*
+ * Hardware actual: 6 modulos de 1 canal con el jumper H/L en LOW (entrada
+ * activa en LOW: 0 V en INn enciende el rele) y un transistor NPN por canal
+ * usado como inversor:
+ *
+ *      P0..P5 --[1 kOhm]-- BASE
+ *                          EMISOR   -> GND
+ *                          COLECTOR -> IN del modulo de rele
+ *
+ * Con ese transistor la logica queda invertida: el PCF8574 debe sacar HIGH
+ * para encender (HIGH -> NPN saturado -> IN a 0 V -> rele ON). Por eso el
+ * registro sombra se escribe TAL CUAL, sin invertirlo.
+ *
+ *   1 = salida del PCF8574 activa en LOW  (rele conectado directo, sin NPN)
+ *   0 = salida del PCF8574 activa en HIGH (rele con transistor NPN inversor)
+ */
+#define BOARD_RELAY_ACTIVE_LOW      0
 
 /* ==========================================================================
- *  Estrategia hibrida de motores
+ *  Estrategia de motores: todos por tiempo (lazo abierto)
  *
- *  M1..M4 (3 hilos, LK20052): micro-switch de 12 V acondicionado con divisor
- *  10 kOhm / 3.3 kOhm. Verificado fisicamente en banco (2026-11-04): mientras
- *  el motor gira (transito) el switch entrega 12 V y el divisor deja ~2.97 V
- *  (HIGH); al llegar a Home la senal cae a 0 V (LOW) durante el pulso de fin
- *  de carrera. Por eso el reposo se lee LOW. SENSOR_HOME_LEVEL abstrae esa
- *  polaridad: cambiarla a 1 invierte la interpretacion sin tocar el circuito.
- *
- *  M5..M6 (2 hilos, LK20052 Fy-007): sin sensor ni homing. Se aplica un pulso
- *  calibrado de BOARD_TIMED_PULSE_MS al rele correspondiente de 0x20.
+ *  Los 6 canales M1..M6 se accionan con un pulso de BOARD_TIMED_PULSE_MS.
+ *  No hay sensores ni retroalimentacion: el firmware escribe unicamente en el
+ *  PCF8574 0x20.
  * ========================================================================== */
-#define BOARD_SENSOR_CHANNEL_COUNT  4       /* Canales M1..M4 con retroalimentacion */
-#define BOARD_TIMED_CHANNEL_FIRST   4       /* Primer canal por tiempo (M5) */
-#define SENSOR_HOME_LEVEL           0       /* 0 = Home LOW (0 V, verificado) | 1 = Home HIGH */
-#define BOARD_TIMED_PULSE_MS        2000    /* Pulso calibrado en lazo abierto */
+#define BOARD_TIMED_PULSE_MS        3000    /* Pulso de una vuelta (~3 s) */
+
+/* ==========================================================================
+ *  Prueba de banco por etapas (puesta en marcha)
+ *
+ *  0 = produccion (sin prueba)
+ *  1 = pulso directo del rele M1 durante BOARD_TIMED_PULSE_MS al arrancar
+ *
+ * En modo produccion (0) no se ejecuta ninguna prueba: las compras despachan
+ * normalmente. El monedero depende de BOARD_COIN_ACCEPTOR_ENABLED (hoy 0).
+ * Dejar en 0 para la version final.
+ * ========================================================================== */
+#define BRINGUP_TEST_MOTOR1         0
 
 /* ==========================================================================
  *  MicroSD por SPI (Seccion 2)

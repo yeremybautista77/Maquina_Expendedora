@@ -1,0 +1,5 @@
+# Editores
+.vscode/
+
+# Artefactos de build (ESP-IDF)
+build/

@@ -29,11 +29,10 @@
  *   1. gui_display_confirm_purchase() SOLO valida y encola el pedido en
  *      task_despacho. NO descuenta saldo ni stock.
  *   2. motor_task() emite MOTOR_EVENT_UNIT_DONE cada vez que una unidad se
- *      entrega: vuelta confirmada por sensor en M1-M4 o pulso temporizado en
- *      M5-M6. En ese momento, y solo en ese momento,
- *      gui_display_on_unit_dispatched() resta el precio al saldo y reduce el
- *      stock en 1.
- *   3. Si un motor falla por timeout, motor_task() emite
+ *      entrega: pulso temporizado de 3 s en M1-M6. En ese momento, y solo en
+ *      ese momento, gui_display_on_unit_dispatched() resta el precio al saldo
+ *      y reduce el stock en 1.
+ *   3. Si un motor falla por error de I2C, motor_task() emite
  *      MOTOR_EVENT_REQUEST_FAILED y descarta el resto de la cola. Las unidades
  *      no entregadas no se cobran ni reducen stock.
  *

@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "board_config.h"
 #include "coin_acceptor.h"
@@ -32,6 +33,7 @@
 #include "freertos/task.h"
 #include "gui_display.h"
 #include "motor_control.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "app_main";
@@ -49,6 +51,7 @@ SemaphoreHandle_t g_dispatch_mutex = NULL;
 
 /* --- Callbacks ------------------------------------------------------------ */
 
+#if BOARD_COIN_ACCEPTOR_ENABLED
 /**
  * @brief Se ejecuta al cerrar cada rafaga valida del monedero.
  */
@@ -70,6 +73,7 @@ static void on_coin_inserted(uint8_t pulses, uint32_t cents, void *ctx)
              cents / 100, cents % 100,
              (long long)(balance / 100), (long long)(balance % 100));
 }
+#endif /* BOARD_COIN_ACCEPTOR_ENABLED */
 
 /**
  * @brief Adaptador entre motor_control y la GUI.
@@ -140,10 +144,14 @@ static void start_tasks(void)
 {
     BaseType_t ok;
 
+#if BOARD_COIN_ACCEPTOR_ENABLED
     ok = xTaskCreate(coin_acceptor_task, "task_monedero", 4096, NULL, 10, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "No se pudo crear task_monedero");
     }
+#else
+    ESP_LOGW(TAG, "Monedero deshabilitado por configuracion (saldo solo por ADM)");
+#endif
 
     ok = xTaskCreate(motor_task, "task_despacho", 4096, NULL, 8, NULL);
     if (ok != pdPASS) {
@@ -158,6 +166,113 @@ static void start_tasks(void)
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "No se pudo crear task_gui");
     }
+}
+
+/* --- Prueba de banco (temporal) ------------------------------------------- */
+
+#if BRINGUP_TEST_MOTOR1
+static void bringup_scan_i2c(i2c_master_bus_handle_t bus)
+{
+    ESP_LOGI(TAG, "Bring-up I2C: escaneando 0x20..0x27");
+    for (uint8_t addr = 0x20; addr <= 0x27; addr++) {
+        if (i2c_master_probe(bus, addr, 50) == ESP_OK) {
+            ESP_LOGI(TAG, "Bring-up I2C: dispositivo responde en 0x%02X",
+                     (unsigned)addr);
+        }
+    }
+}
+
+static void bringup_motor1(void)
+{
+    ESP_LOGW(TAG, "Bring-up M1: activando rele %d ms", MOTOR_TIMED_PULSE_MS);
+    esp_err_t err = motor_control_set_relay(0, true);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Bring-up M1: fallo activando rele: %s",
+                 esp_err_to_name(err));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(MOTOR_TIMED_PULSE_MS));
+    err = motor_control_set_relay(0, false);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Bring-up M1: fallo apagando rele: %s",
+                 esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "Bring-up M1: rele apagado");
+    }
+}
+
+static void bringup_task(void *arg)
+{
+    i2c_master_bus_handle_t bus = (i2c_master_bus_handle_t)arg;
+
+    /* Deja que la GUI arranque y muestre la pantalla normal. */
+    vTaskDelay(pdMS_TO_TICKS(1500));
+
+    bringup_scan_i2c(bus);
+
+    if (xSemaphoreTake(g_dispatch_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Bring-up: mutex de despacho ocupado");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    bringup_motor1();
+    xSemaphoreGive(g_dispatch_mutex);
+
+    vTaskDelete(NULL);
+}
+#endif /* BRINGUP_TEST_MOTOR1 */
+
+/* --- Mantenimiento unico de NVS ------------------------------------------- */
+
+/*
+ * Reinicio de stock solicitado el 2026-11-04. Se hace UNA sola vez por placa:
+ * se escribe el blob de stock a 10 y se marca la clave de control. En arranques
+ * posteriores no se vuelve a tocar, de modo que el stock real no se pierde.
+ *
+ * Se ejecuta ANTES de gui_display_init() para que la GUI cargue el valor nuevo.
+ * No toca saldo ni precios.
+ */
+#define MAINT_NVS_NAMESPACE     "vending"
+#define MAINT_NVS_KEY_STOCK     "stock"
+#define MAINT_NVS_KEY_DONE      "stock_reset_v1"
+#define MAINT_STOCK_VALUE       10
+
+static void maintenance_reset_stock_once(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(MAINT_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Reset de stock omitido: NVS no abre (%s)",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    uint8_t done = 0;
+    if (nvs_get_u8(handle, MAINT_NVS_KEY_DONE, &done) == ESP_OK && done != 0) {
+        nvs_close(handle);
+        return;
+    }
+
+    uint8_t stock[BOARD_CHANNEL_COUNT];
+    memset(stock, MAINT_STOCK_VALUE, sizeof(stock));
+
+    err = nvs_set_blob(handle, MAINT_NVS_KEY_STOCK, stock, sizeof(stock));
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, MAINT_NVS_KEY_DONE, 1);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "Stock reiniciado a %d por producto (una sola vez)",
+                 MAINT_STOCK_VALUE);
+    } else {
+        ESP_LOGE(TAG, "No se pudo reiniciar el stock: %s",
+                 esp_err_to_name(err));
+    }
+    nvs_close(handle);
 }
 
 /* --- Punto de entrada ----------------------------------------------------- */
@@ -185,6 +300,8 @@ void app_main(void)
     if (nvs_err != ESP_OK) {
         ESP_LOGE(TAG, "NVS no disponible (%s); saldo y stock no se guardaran",
                  esp_err_to_name(nvs_err));
+    } else {
+        maintenance_reset_stock_once();
     }
 
     /*
@@ -198,7 +315,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Mutex de despacho creado (un motor a la vez)");
 
     /*
-     * 2. Bus I2C + expansores PCF8574 (relees 0x20; sensores 0x21 en M1-M4).
+     * 2. Bus I2C + PCF8574 de relees (0x20).
      */
     i2c_master_bus_handle_t i2c_bus = NULL;
     if (init_i2c_bus(&i2c_bus) == ESP_OK) {
@@ -213,12 +330,19 @@ void app_main(void)
 
     /*
      * 3. Monedero: GPIO35 + ISR + cola de pulsos.
+     *
+     * En esta version no se usa monedero fisico: el saldo se carga desde el
+     * panel ADM. Se omite la inicializacion para no leer una linea flotante.
      */
+#if !BOARD_COIN_ACCEPTOR_ENABLED
+    ESP_LOGW(TAG, "Monedero omitido: saldo administrado desde el panel ADM");
+#else
     if (coin_acceptor_init() == ESP_OK) {
         coin_acceptor_set_callback(on_coin_inserted, NULL);
     } else {
         ESP_LOGE(TAG, "Monedero no inicializado");
     }
+#endif
 
     /*
      * 4. Activos graficos de la MicroSD y GUI.
@@ -253,6 +377,14 @@ void app_main(void)
      * 6. Tareas concurrentes.
      */
     start_tasks();
+
+#if BRINGUP_TEST_MOTOR1
+    BaseType_t bringup_ok = xTaskCreate(bringup_task, "task_bringup", 4096,
+                                        i2c_bus, 3, NULL);
+    if (bringup_ok != pdPASS) {
+        ESP_LOGE(TAG, "No se pudo crear la tarea de bring-up");
+    }
+#endif
 
     ESP_LOGI(TAG, "Arranque completado. Sistema en espera de monedas.");
 }

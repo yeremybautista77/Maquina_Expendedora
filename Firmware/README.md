@@ -4,9 +4,16 @@ Firmware en **C nativo** para una máquina expendedora de **6 canales** sobre un
 placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 [`documento_de_arquitectura_tecnico.md`](../Documentacion/Documentacion%20Tecnica/documento_de_arquitectura_tecnico.md).
 
-> **Estado:** **Fase P1 (Firmware v1.0) completada en laboratorio.** Compila sin
-> errores ni warnings (`maquina_expendedora.bin` = **616 960 B**, 41 % libre).
-> Pendiente: validación en la placa real (táctil, motores, NVS y modo admin).
+> **Estado:** **Fase P1 (Firmware v1.0) validada en hardware el 2026-11-04.**
+> Compila sin errores ni warnings (`maquina_expendedora.bin` = **611 600 B**,
+> 42 % libre). Los **6 motores (M1–M6)** se probaron físicamente: relé + giro de
+> 3 s + parada + cobro correcto.
+>
+> **Configuración actual de banco:** **sin monedero**
+> (`BOARD_COIN_ACCEPTOR_ENABLED = 0`). IO35 no se inicializa y el saldo se carga
+> desde el panel `ADM`. `BRINGUP_TEST_MOTOR1 = 0`.
+> **Relés con transistor NPN inversor:** `BOARD_RELAY_ACTIVE_LOW = 0`. El
+> PCF8574 saca **HIGH** para encender y **LOW** para apagar.
 
 ## Requisitos
 
@@ -41,11 +48,11 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 
 ### Verificaciones antes de energizar
 
-- Alimentar los **PCF8574 a 3.3 V** (no 5 V) para mantener los niveles del bus I2C.
-- Los **módulos de relé** tienen **bobina de 12 V** y entrada de control optoacoplada; el PCF8574 solo entrega la señal de 3.3 V.
-- Los canales **M1–M4** requieren el divisor **10 kΩ / 3.3 kΩ** en la señal del micro-switch. **M5–M6** no llevan sensor: P4/P5 de `0x21` quedan sin conexión.
+- Alimentar el **PCF8574 a 3.3 V** (no 5 V) para mantener los niveles del bus I2C.
+- Los **6 relés** son módulos de **1 canal** con bobina de 12 V y entrada optoacoplada. El **jumper `H/L` va en LOW** (0 V en `IN` enciende). Entre el PCF8574 y cada `IN` hay un **transistor NPN inversor**: `EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`. Por eso el PCF8574 enciende con **HIGH**.
+- Los **6 canales** se despachan por tiempo; el expansor `0x21` **no está montado todavía** (reservado para sensores de posición).
 - **Pines confirmados físicamente** (ver `board_config.h`):
-  - I2C (PCF8574 0x20/0x21): **SDA=IO32, SCL=IO25**, 100 kHz.
+  - I2C (PCF8574 0x20): **SDA=IO32, SCL=IO25**, 100 kHz.
   - TFT ST7796 (SPI2/HSPI): **SCLK=14, MOSI=13, MISO=12, CS=15, DC=2,
     RST=NC, BL=27**.
   - Táctil XPT2046: **CS=33, IRQ=NC** (modo sondeo).
@@ -113,7 +120,7 @@ Firmware/
     ├── idf_component.yml   # Dependencias gestionadas (LVGL, ST7796, XPT2046)
     ├── board_config.h      # Mapa de pines y constantes de hardware
     ├── main.c              # app_main: I2C, SD, callback de despacho y 3 tareas
-    ├── motor_control.h/.c  # PCF8574 (0x20 relés / 0x21 sensores M1-M4), cola, eventos
+    ├── motor_control.h/.c  # PCF8574 (0x20 relés), cola, eventos y pulso de 3 s
     ├── coin_acceptor.h/.c  # ISR IO35 y ráfagas 1/3/5/7 pulsos
     └── gui_display.h/.c    # ST7796 + XPT2046 + LVGL, grid 2x3, modal, cobro
 ```
@@ -130,18 +137,11 @@ Firmware/
 
 - **Monedero:** RD$ 1 = 1 pulso, RD$ 5 = 3, RD$ 10 = 5, RD$ 25 = 7. La ISR solo
   encola; la tarea cierra la ráfaga tras 300 ms de silencio y acredita el saldo.
-- **Motores híbridos:** M1–M4 (LK20052 de 3 hilos) usan micro-switch de fin de
-  carrera acondicionado con un divisor 10 kΩ / 3.3 kΩ. Verificado en banco
-  (2026-11-04): en tránsito la señal es 12 V (HIGH ≈ 2.97 V tras el divisor) y
-  en Home cae a 0 V (LOW), por lo que Home se lee LOW
-  (`SENSOR_HOME_LEVEL = 0`). Secuencia: verificar Home → energizar → esperar
-  salida de Home → esperar retorno → apagar siempre → liberar Mutex.
-  M5–M6 (LK20052 Fy-007 de 2 hilos) no tienen sensor: se aplica un pulso
-  calibrado de ~2.0 s y se apaga el relé.
-- ***Homing* al arrancar:** solo M1–M4. Lee P0–P3 de `0x21` y, si un canal está
-  fuera de reposo, energiza su relé hasta que el sensor alcance
-  `SENSOR_HOME_LEVEL`. Es secuencial, usa `g_dispatch_mutex` y tiene un timeout
-  de seguridad de 10 s por canal. P4/P5 de `0x21` no se leen.
+- **Motores en lazo abierto:** los 6 canales (M1–M6) usan la misma estrategia.
+  El firmware escribe el bit del canal en `0x20` en **HIGH (3.3 V)** durante
+  `MOTOR_TIMED_PULSE_MS` (**3000 ms**) y después lo pone en **LOW (0 V)**. El
+  HIGH satura el NPN, que lleva el `IN` del relé a 0 V; el LOW lo deja al corte.
+  El relé se apaga siempre, incluso ante error, y solo un motor gira a la vez.
 - **Eventos de despacho:** `motor_task` emite `MOTOR_EVENT_UNIT_DONE` por cada
   unidad entregada, `MOTOR_EVENT_REQUEST_FAILED` si un motor falla y
   `MOTOR_EVENT_IDLE` al vaciar la cola. `main.c` los adapta a la GUI.
@@ -157,10 +157,9 @@ Firmware/
   Precios de fábrica: RD$ 40/50/60/70/80/90 (mutables, clave NVS `prices`).
 - **Cobro diferido (corrección del riesgo #3):** al confirmar, la GUI **solo
   encola** el pedido; no descuenta saldo ni stock. El descuento ocurre en
-  `gui_display_on_unit_dispatched()`, únicamente cuando el motor confirma una
-  vuelta con el sensor en el nivel de reposo (M1–M4) o completa el pulso
-  temporizado (M5–M6). Si un motor falla por timeout, se descarta el resto del
-  pedido y **lo no entregado no se cobra ni reduce stock**.
+  `gui_display_on_unit_dispatched()`, únicamente cuando se completa el pulso
+  temporizado de 3 s de la unidad. Si un motor falla por error de I2C, se
+  descarta el resto del pedido y **lo no entregado no se cobra ni reduce stock**.
 - **Modo administración:** botón `ADM` (46×40 px) junto a `Confirmar` y
   contraseña provisional **0000**. El teclado numérico se valida antes de abrir
   el panel con scroll de tres secciones: saldo (± RD$ 1/5/10/25, persistido en
@@ -169,7 +168,11 @@ Firmware/
 
 ## Pendiente (iterativo)
 
-1. Cablear los 4 motores M1–M4 (sensor por divisor 10 kΩ / 3.3 kΩ), verificar
-   `Sensores 0x21: M1..M4 = 0x0` con los canales en Home (LOW) y probar una
-   compra real. Monedero, táctil y expansor ya están validados en placa.
-2. Telemetría Wi-Fi y audio (V2.0).
+1. ~~Cablear los 6 motores y verificar el pulso de 3 s en cada canal.~~ **Hecho
+   el 2026-11-04:** los 6 motores giran y se detienen correctamente.
+2. **Sensores de posición (siguiente etapa):** añadir el segundo PCF8574 en
+   `0x21` con divisores de tensión en las entradas, y usar la lectura para
+   confirmar la entrega (o detener el motor antes del tiempo).
+3. MicroSD: el montaje falla con `sdmmc_card_init failed (0x107)`; solo afecta
+   las imágenes de los productos.
+4. Telemetría Wi-Fi y audio (V2.0).

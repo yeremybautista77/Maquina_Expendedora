@@ -4,27 +4,23 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-11-04
-> **Estado global:** **fase P1 de software completada y modo administración
-> ampliado** (acceso por botón + contraseña, ajuste manual de saldo, inventario
-> y precios mutables en NVS) y se sube a GitHub al cierre de esta sesión. Pines
-> confirmados, estrategia híbrida de motores, *homing* de M1–M4, NVS, layout
-> Flex 2×3 y cobro diferido por unidad implementados; compila sin errores ni
-> warnings (`maquina_expendedora.bin` = **616 960 B**, 41 % libre).
-> **Pantalla validada en hardware:** flasheo por COM5 correcto, ST7796 +
-> XPT2046 funcionando, táctil calibrado (rotación de 180° compensada) y colores
-> corregidos (sin inversión). **Monedero validado en placa** (CH-926, NO + FAST,
-> 1/3/5/7 pulsos = RD$ 1/5/10/25, saldo persistido en NVS). Pendiente: *homing*
-> y compra completa en la placa real.
+> **Última actualización:** 2026-11-04 (noche)
+> **Estado global:** **fase P1 validada en hardware.** Compila sin errores ni
+> warnings (`maquina_expendedora.bin` = **611 600 B**, 42 % libre). Los **6
+> motores (M1–M6)** se probaron físicamente: relé, giro de 3 s, parada y cobro
+> correcto. Pantalla, táctil, NVS y modo administración ya estaban validados.
 >
-> **Montaje actual (2026-11-04):** el expansor de pines (PCF8574) ya está
-> conectado y los **4 motores con sensor** (M1–M4) se verificaron en banco:
-> en tránsito el tercer hilo entrega 12 V (HIGH ≈ 2.97 V tras el divisor) y en
-> Home cae a 0 V (LOW). Quedan pendientes de cablear en la máquina. M5 y M6 son
-> por tiempo (~2.0 s). El firmware tiene M1–M4 en bucle cerrado (homing,
-> arranque 3 s y vuelta 20 s) con `SENSOR_HOME_LEVEL = 0` y añade el
-> diagnóstico `Sensores 0x21: M1..M4 = 0xX (0 = Home, 1 = tránsito)` al
-> arrancar. Pendiente: conectar todo y probar una compra real.
+> **Montaje actual (2026-11-04):** 6 módulos de relé de **1 canal**
+> (SRD-12VDC-SL-C) con **jumper `H/L` en LOW** y un **transistor NPN inversor**
+> por canal (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). El PCF8574
+> enciende con **HIGH** (`BOARD_RELAY_ACTIVE_LOW = 0`). **No hay sensores
+> montados**: el expansor `0x21` y los divisores de tensión quedan planificados
+> para la siguiente etapa.
+>
+> **Monedero deshabilitado** (`BOARD_COIN_ACCEPTOR_ENABLED = 0`): sin IO35, sin
+> `task_monedero`; el saldo se carga desde el panel `ADM`.
+> **MicroSD:** el montaje falla (`sdmmc_card_init 0x107`); solo afecta las
+> imágenes de los productos.
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -33,7 +29,7 @@
 - [x] Monedero por ISR en IO35 con ventana de ráfaga y antirrebote.
 - [x] Filtro anti-saldo-fantasma en IO35: gracia de arranque, ancho de pulso
       válido y armado solo con la línea en reposo estable (ver §5.2).
-- [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). M1–M4 con sensor; M5–M6 por tiempo.
+- [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). Los 6 canales en lazo abierto por tiempo (3 s).
 - [x] Eventos de despacho (`UNIT_DONE` / `REQUEST_FAILED` / `IDLE`) y descarte
       de la cola ante fallo.
 - [x] GUI real: ST7796 320×480 por `esp_lcd`, XPT2046, LVGL 8.4, layout Flex
@@ -50,23 +46,21 @@
       10) y **precios** (6 productos, ± RD$ 5 y guardado en NVS). Sin prueba de
       motores.
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
-- [x] *Homing* secuencial de los canales M1–M4 al arrancar (timeout 10 s).
 - [x] Persistencia en NVS de saldo, stock y precios (carga al arrancar; guardado
       por moneda, unidad entregada o cambio de precio).
 - [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
       `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**616 960 B**, 41 % libre) y `Firmware/` versionado.
+- [x] Build limpio (**611 600 B**, 42 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
-1. **Validar el resto de la placa real**: conectar monedero y módulos I2C/motores;
-   probar *homing*, NVS, rechazo por cola llena y modo administración completo
-   (precios y tests de motor). La pantalla, el táctil y los colores ya están
-   validados.
+1. **Validar el resto de la placa real**: conectar monedero y el módulo de
+   relés; probar el pulso de 3 s en los 6 canales, NVS, rechazo por cola llena
+   y modo administración completo. La pantalla, el táctil y los colores ya
+   están validados.
 2. Pruebas automatizadas y CI (transversal).
 3. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
-4. Ampliar el modo administración con historial de ventas/recaudación y
-   diagnóstico de sensores (los precios y los tests de motor ya están hechos).
+4. Ampliar el modo administración con historial de ventas/recaudación.
 
 **Estado de las acciones de esta sesión:**
 
@@ -100,7 +94,7 @@ posteriores).
 
 ### Pregunta 2 — ¿Flasheamos ahora en la placa real?
 
-Para probar homing, NVS y táctil necesito la placa conectada.
+Para probar NVS, táctil y el despacho de motores necesito la placa conectada.
 
 - Dime el **puerto COM** (p. ej. `COM3`) o si prefieres que lo detecte.
 - ¿Quieres **monitor serie** para ver los logs de arranque? (sí/no)
@@ -131,9 +125,9 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 1. **Pines confirmados** en `board_config.h`: I2C **SDA=IO32 / SCL=IO25**, TFT
    **14/13/12/15/2/NC/27**, táctil **CS=33 / IRQ=NC** y MicroSD
    **5/18/19/23**. Se eliminaron todas las etiquetas `TODO_VERIFICAR_PINES`.
-2. **Homing** `motor_control_home_all()`: secuencial (un motor a la vez), toma
-   `g_dispatch_mutex` y usa timeout de **10 s** por canal; se ejecuta al final de
-   `motor_control_init()`. El relé se apaga siempre.
+2. **Motores:** en esa fecha se añadió una rutina de referencia de posición;
+   quedó **eliminada el 2026-11-04** al adoptar el despacho por tiempo en los
+   6 canales.
 3. **NVS** (`nvs_flash`): namespace `vending`, claves `balance` (int64) y
    `stock` (blob de 6 B). Carga en `gui_display_init()`; guarda al acreditar
    monedas y en cada unidad cobrada.
@@ -202,27 +196,62 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
    `admin_test` permanece en `motor_control.c`/`main.c`, pero la GUI ya no lo usa.
 5. **Build:** **616 960 B** (`0x96a00`), **41 % libre**, sin warnings.
 
-### Motores M1–M4 y diagnóstico de sensores (2026-11-04)
+### Eliminación total de sensores y despacho por tiempo (2026-11-04; el punto 8 completa la lógica de relés)
 
-1. **Motores recibidos:** los 4 motores de 3 hilos (salida, alimentación y
-   sensor) ya están en poder del usuario; M1–M4 quedan listos para cablear en
-   bucle cerrado. M5 y M6 siguen por tiempo (~2.0 s).
-2. **Código ya habilitado:** `BOARD_SENSOR_CHANNEL_COUNT = 4`,
-   `MOTOR_SENSOR_CHANNEL_COUNT = 4` y los `_Static_assert` garantizan el
-   alineamiento. El homing y el despacho con sensor nunca estuvieron
-   desactivados; no hizo falta cambiar la lógica de control.
-3. **Diagnóstico:** tras el homing, `motor_control_init()` lee `0x21` y
-   registra `Sensores 0x21: M1..M4 = 0xX (0 = Home/LOW, 1 = tránsito/HIGH)`.
-   Sirve para verificar el cableado y el divisor 10 kΩ / 3.3 kΩ de cada motor.
-4. **Verificación física en banco (2026-11-04):** los 4 motores LK20052 se
-   probaron a 12 V midiendo el tercer hilo contra GND. **En tránsito** entrega
-   12 V → divisor → ≈ 2.97 V → `0x21` lee **HIGH** (bit 1). **En Home** cae a
-   0 V durante el pulso de fin de carrera → divisor → 0 V (pull-down) → `0x21`
-   lee **LOW** (bit 0). Se fijó `SENSOR_HOME_LEVEL = 0` y se confirmó que
-   `motor_control_read_sensor()` marca Home cuando el bit es 0. Documentado en
-   `Diseño_electronico/ARQUITECTURA_HARDWARE.md` §3.3.1 y en la arquitectura
-   técnica §4.1.
-5. **Build:** **616 960 B** (`0x96a00`), **41 % libre**, sin warnings.
+1. **Se elimina el expansor `0x21`.** El firmware ya no lo inicializa, no lo lee
+   y no existe ninguna ruta de lectura de fines de carrera. También se
+   eliminaron `motor_control_read_sensor*()`, `motor_control_home_all()`,
+   `motor_control_write_relay_raw()`, `channel_uses_sensor()` y las etapas de
+   bring-up 2, 3 y 4.
+2. **Los 6 canales usan la misma estrategia.** `motor_control_dispatch_one()`
+   energiza el relé del canal, mantiene el pulso `MOTOR_TIMED_PULSE_MS` =
+   **3000 ms** y apaga el relé siempre en el bloque `cleanup`.
+3. **Lógica del módulo de relés (histórico, superado por el punto 8).** Jumper
+   físico en **HIGH**: escribir **LOW (0 V)** en el pin INn activa el motor y
+   **HIGH (3.3 V)** lo apaga. El driver mantiene un registro sombra lógico y lo
+   invierte al escribir en `0x20` (`BOARD_RELAY_ACTIVE_LOW = 1`). Con el NPN
+   actual el jumper va en **LOW** y `BOARD_RELAY_ACTIVE_LOW = 0`.
+4. **Sin acondicionamiento de señal.** Se eliminaron los divisores 10 kΩ /
+   3.3 kΩ, las resistencias de pull-up/pull-down asociadas a los sensores y
+   cualquier mención a micro-switches en el código y en la documentación.
+5. **Bring-up reducido.** `BRINGUP_TEST_MOTOR1 = 1` hace un único pulso de 3 s
+   sobre M1 al arrancar; `0` deja el sistema en producción.
+6. **Build:** **611 600 B** (`0x95510`), **42 % libre**, sin warnings.
+7. **Modo produccion y correccion de compra (2026-11-04).**
+   - **Monedero deshabilitado** con `BOARD_COIN_ACCEPTOR_ENABLED = 0`: no se
+     inicializa IO35 ni se crea `task_monedero`. El saldo se carga desde el
+     panel `ADM`.
+   - `BRINGUP_TEST_MOTOR1 = 0`.
+   - `gui_display_confirm_purchase()` ahora inicializa `batch[].admin_test =
+     false`. Antes el campo quedaba indeterminado y una venta real podia
+     tratarse como test de administrador.
+   - `motor_control_init()` hace `i2c_master_probe(0x20)` y registra si el
+     PCF8574 responde. Cada conmutacion registra el byte fisico enviado:
+     `Canal N -> ON/OFF (0x20 = 0xXX)`.
+   - **Reset de stock unico:** `maintenance_reset_stock_once()` escribe el blob
+     de stock a 10 y marca `stock_reset_v1` en NVS. No toca saldo ni precios y
+     no se repite en arranques posteriores.
+
+8. **Transistor NPN inversor y validación de los 6 motores (2026-11-04, noche).**
+   - El módulo de relé de 12 V tiene el LED del opto referenciado a 12 V: con el
+     jumper en LOW, un HIGH de 3.3 V no lo apagaba y el motor quedaba pegado.
+   - Se sustituyó el módulo de 6 canales por **6 módulos de 1 canal**
+     (SRD-12VDC-SL-C) y se añadió un **NPN por canal**:
+     `P0…P5 → 1 kΩ → BASE`, `EMISOR → GND`, `COLECTOR → IN`.
+   - `BOARD_RELAY_ACTIVE_LOW = 0`: el PCF8574 enciende con **HIGH** (`0x01`,
+     `0x02`, `0x04`, `0x08`, `0x10`, `0x20`) y apaga con **LOW** (`0x00`).
+   - **Validado en placa:** M1–M6 giran y se detienen; cada pulso dura ~3.009 s
+     y el cobro ocurre después del apagado.
+   - **Efecto conocido:** el PCF8574 arranca con sus pines en HIGH, así que al
+     energizar los 6 NPN pueden conducir durante el arranque (~0.4 s) hasta que
+     `motor_control_init()` escribe `0x00`. Es un tirón corto, no una activación
+     sostenida.
+
+### Historial superado (2026-11-04)
+
+> La estrategia anterior de los canales M1–M4 quedó eliminada por completo. El
+> firmware vigente no usa sensores ni `0x21`: los 6 canales se despachan por
+> tiempo con un pulso de 3 s.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -234,8 +263,9 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
 | Monedero (ISR IO35) | ✅ Validado en placa | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25 |
-| Despacho I2C + Mutex | ✅ Expansor conectado | Motores M1–M4 recibidos; validar cableado y compra real |
-| *Homing* de arranque | ✅ Implementado | Probar con motor fuera de reposo |
+| Despacho I2C + Mutex | ✅ Validado en placa | 6 canales por tiempo (3 s); M1–M6 probados con el NPN |
+| Relés + transistor NPN | ✅ Validado en placa | PCF8574 HIGH = encendido; jumper `H/L` en LOW |
+| *Homing* de arranque | ➖ Eliminado | Ya no hay sensores: lazo abierto en M1–M6 |
 | Persistencia NVS | ✅ Implementado | Saldo validado tras reinicio; falta stock/precios |
 | GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
@@ -273,10 +303,12 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 4. **El monedero entra por IO35**, que es *input-only* y **no tiene pull-up
    interno**: requiere pull-up externo de 10 kΩ a 3.3 V. El firmware **no debe
    habilitar el pull-up por software** (ya está el externo y cargaría el opto).
-5. Los PCF8574 deben alimentarse a **3.3 V**, no 5 V.
-6. **El saldo y el stock solo se descuentan cuando el motor confirma la unidad**
-   (sensor en M1–M4 o pulso completado en M5–M6). Confirmar la compra únicamente
-   encola el pedido.
+   **En el banco actual el monedero está deshabilitado**
+   (`BOARD_COIN_ACCEPTOR_ENABLED = 0`) y el saldo se carga desde `ADM`; para
+   reactivarlo, ponerlo en `1` y volver a cablear IO35 con su pull-up.
+5. El PCF8574 debe alimentarse a **3.3 V**, no 5 V.
+6. **El saldo y el stock solo se descuentan cuando se completa el pulso de la
+   unidad** (3 s). Confirmar la compra únicamente encola el pedido.
 7. **Un test de administrador no es una venta:** solo descuenta el stock de la
    unidad que cae; nunca toca saldo, pedido ni modal.
 
@@ -298,23 +330,20 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 - Ventana de ráfaga: **300 ms** sin pulsos ⇒ la moneda terminó.
 - Antirrebote por pulso: **20 ms**.
 
-### 2.2 Bus I2C y expansores PCF8574
+### 2.2 Bus I2C y expansor PCF8574
 
 | Dirección | Función | Bits |
 | :--- | :--- | :--- |
-| `0x20` | Módulo de relés (motores 12 V) | P0..P5 → canales 1..6 |
-| `0x21` | Sensores de fin de carrera (solo M1–M4) | P0..P3 → canales 1..4; P4/P5 sin conexión |
+| `0x20` | 6 módulos de relé (motores 12 V) | P0..P5 → canales 1..6 |
 
 - I2C0, **SDA = IO32, SCL = IO25** (confirmado físicamente), **100 kHz**.
-- Relé **activo en LOW**; el driver invierte el bit al escribir.
-- **M1–M4 (LK20052 de 3 hilos):** verificado en banco (2026-11-04): en tránsito
-  el micro-switch entrega 12 V y en Home cae a 0 V durante el pulso de fin de
-  carrera. Se acondiciona con un divisor **10 kΩ en serie + 3.3 kΩ a GND**
-  (≈ 2.97 V en tránsito, 0 V en Home). La placa LK20052 queda intacta: **no se
-  cortan pistas**. Home se lee **LOW** (`SENSOR_HOME_LEVEL = 0`), ajustable por
-  software.
-- **M5–M6 (LK20052 Fy-007 de 2 hilos):** sin sensor ni homing; se aplica un pulso
-  calibrado de **~2.0 s** al relé correspondiente. P4/P5 de `0x21` no se leen.
+- Cada canal: **P0…P5 → 1 kΩ → BASE del NPN**, `EMISOR → GND`,
+  `COLECTOR → IN` del módulo. El jumper `H/L` de los 6 módulos está en **LOW**
+  (0 V en `IN` enciende). Como el NPN invierte, el PCF8574 enciende con **HIGH**
+  y apaga con **LOW** (`BOARD_RELAY_ACTIVE_LOW = 0`, sin invertir el sombra).
+- **Los 6 canales (M1–M6)** se despachan en lazo abierto con un pulso de
+  **3000 ms** (`MOTOR_TIMED_PULSE_MS`). No hay sensores ni divisores montados;
+  el expansor `0x21` está reservado para la siguiente etapa.
 
 ### 2.3 MicroSD (SPI)
 
@@ -403,8 +432,8 @@ cd Firmware
 
 ```
 Project build complete.
-maquina_expendedora.bin → 592 512 bytes (0x90a80)
-Partición app 0x100000 → 43 % libre
+maquina_expendedora.bin → 611 600 bytes (0x95510)
+Partición app 0x100000 → 42 % libre
 Sin warnings del compilador en los archivos del proyecto.
 ```
 
@@ -427,7 +456,7 @@ Firmware/
     ├── idf_component.yml       # LVGL, esp_lcd_st7796, esp_lcd_touch_xpt2046
     ├── board_config.h          # Pines, direcciones I2C, polaridades
     ├── main.c                  # app_main: I2C, SD, callback de despacho, tareas
-    ├── motor_control.h/.c      # Relés, sensores, cola, Mutex y eventos
+    ├── motor_control.h/.c      # Relés (0x20), cola, Mutex, eventos y pulso de 3 s
     ├── coin_acceptor.h/.c      # ISR IO35 y decodificación de ráfagas
     └── gui_display.h/.c        # ST7796 + XPT2046 + LVGL, grid, modal, cobro
 ```
@@ -465,8 +494,8 @@ Orden de arranque en `app_main()`:
    incompatible). Debe ir antes de la GUI, que carga saldo/stock.
 2. Crea `g_dispatch_mutex` (Mutex global de despacho) **antes** de cualquier tarea.
 3. Crea el bus I2C (`i2c_new_master_bus`, driver moderno `driver/i2c_master.h`).
-4. `motor_control_init(i2c_bus)` → configura ambos PCF8574, la cola y ejecuta el
-   *homing* secuencial de los canales con sensor (M1–M4).
+4. `motor_control_init(i2c_bus)` → configura el PCF8574 `0x20`, la cola y
+   deja todos los relés apagados.
 5. `coin_acceptor_init()` + callback `on_coin_inserted`.
 6. `gui_display_mount_sd()` y luego `gui_display_init()` (carga la NVS).
    - Si la SD falla: solo warning, el sistema sigue (placeholder
@@ -519,36 +548,19 @@ Orden de arranque en `app_main()`:
 - Registro sombra de relés para no alterar los otros canales al escribir el
   PCF8574.
 - Mutex interno `s_i2c_mutex` para serializar el bus I2C.
-- Cola FIFO de despacho (`motor_request_t { channel, quantity }`, longitud 8).
-- `motor_control_home_all()` (invocada al final de `motor_control_init()`):
-  - Solo recorre **M1–M4** (P0–P3 de `0x21`); P4/P5 no se leen.
-  - Los canales ya en reposo (`SENSOR_HOME_LEVEL`) no se tocan.
-  - Para cada canal fuera de reposo: toma `g_dispatch_mutex`, energiza su relé
-    y espera el nivel de reposo con timeout de **10 s**.
-  - Es secuencial (un motor a la vez) y apaga el relé siempre, incluso si vence
-    el timeout. Un fallo de homing no bloquea el arranque.
+- Cola FIFO de despacho (`motor_request_t { channel, quantity, admin_test }`,
+  longitud 8).
 - `motor_control_dispatch_one()`:
-
-  **M1–M4 (con sensor):**
   1. Toma `g_dispatch_mutex` (timeout configurable).
-  2. Verifica que el canal esté en reposo (`SENSOR_HOME_LEVEL`). Si no, rechaza
-     con `ESP_ERR_INVALID_STATE`.
-  3. Energiza el relé.
-  4. Espera que el sensor se libere (arranque) — timeout **3000 ms**.
-  5. Espera que vuelva al nivel de reposo (vuelta completa) — timeout **20000 ms**.
-  6. **Apaga el relé siempre** (`cleanup`), incluso con error/timeout.
-  7. Pausa de asentamiento **250 ms** y libera el Mutex.
-
-  **M5–M6 (sin sensor):**
-  1. Toma `g_dispatch_mutex`.
-  2. Energiza el relé y mantiene el pulso `MOTOR_TIMED_PULSE_MS` (**~2.0 s**).
-  3. Apaga el relé, pausa de asentamiento **250 ms** y libera el Mutex.
-
+  2. Energiza el relé del canal: bit lógico ON → **LOW (0 V)** en `0x20`.
+  3. Mantiene el pulso `MOTOR_TIMED_PULSE_MS` (**3000 ms**).
+  4. **Apaga el relé siempre** (`cleanup`), incluso con error. OFF → **HIGH
+     (3.3 V)** en `0x20`.
+  5. Pausa de asentamiento **250 ms** y libera el Mutex.
 - `motor_task()` procesa la cola en orden; entre unidades del mismo canal espera
   **400 ms**.
 - Emite eventos al callback registrado (desde el contexto de `motor_task`):
-  - `MOTOR_EVENT_UNIT_DONE` tras cada unidad entregada (sensor en M1–M4 o pulso
-    completado en M5–M6).
+  - `MOTOR_EVENT_UNIT_DONE` tras cada unidad entregada (pulso completado).
   - `MOTOR_EVENT_REQUEST_FAILED` si una unidad falla; incluye el código de error
     y cuántas unidades quedaron sin entregar.
   - `MOTOR_EVENT_IDLE` cuando la cola queda vacía.
@@ -619,7 +631,7 @@ Orden de arranque en `app_main()`:
     cobra.
 - `gui_display_on_unit_dispatched(channel, admin_test)`:
   - Venta real: **único punto de cobro**; resta el precio al saldo y reduce el
-    stock en 1 por cada unidad confirmada por el motor.
+    stock en 1 por cada unidad cuyo pulso de 3 s se completó.
   - Test de administrador: **solo** reduce el stock en 1 y persiste; no toca
     saldo, pedido, modal ni totales.
 - `gui_display_on_dispatch_failed(channel, error, admin_test)`:
@@ -637,7 +649,7 @@ Moneda → ISR IO35 → cola de pulsos → task_monedero (ventana 300 ms)
 Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
       → gui_display_confirm_purchase(): valida y ENCOLA (no cobra)
       → task_despacho mueve motores uno a uno
-      → por cada vuelta OK: MOTOR_EVENT_UNIT_DONE (admin_test = false)
+      → por cada pulso de 3 s completado: MOTOR_EVENT_UNIT_DONE
       → gui_display_on_unit_dispatched(): saldo -= precio, stock -= 1
       → si un motor falla: MOTOR_EVENT_REQUEST_FAILED
          → se descarta la cola; lo no entregado no se cobra ni baja stock
@@ -683,9 +695,9 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 
 - [ ] **Validación en la placa real (checklist §8)**
   - Flashear y confirmar en el log: `ST7796 listo`, `Tactil XPT2046 listo`,
-    `MicroSD montada` y `Homing completado`.
-  - Probar: monedas, compra de 1 unidad, cobro diferido, homing tras un corte y
-    persistencia NVS tras reinicio.
+    `MicroSD montada` y `Control de motores listo`.
+  - Probar: monedas, compra de 1 unidad, pulso de 3 s en los 6 canales, cobro
+    diferido y persistencia NVS tras reinicio.
   - *Criterio:* se completa el checklist de §8 sin fallos.
 
 - [x] **Calibrar el táctil y los colores**
@@ -698,17 +710,14 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 ### P1 — Robustez y consistencia
 
 - [x] **Rutina de *homing***
-  - `motor_control_home_all()` se ejecuta al final de `motor_control_init()`.
-  - Solo recorre M1–M4; si un canal está fuera de reposo, energiza su relé hasta
-    alcanzar `SENSOR_HOME_LEVEL` con timeout de 10 s por canal.
-  - Es secuencial y usa `g_dispatch_mutex`; el relé se apaga siempre.
-  - *Criterio:* tras un corte de energía a mitad de vuelta, el sistema se
-    recupera solo en los canales con sensor.
+  - ~~Implementada para M1–M4.~~ **Eliminada el 2026-11-04** junto con todo el
+    subsistema de sensores: los 6 canales usan un pulso de 3 s en lazo abierto.
+  - *Criterio:* ya no aplica; no hay retroalimentación de posición.
 
 - [x] **Descontar stock/saldo solo al confirmar el despacho**
   - Implementado **por unidad**: `motor_task` emite `MOTOR_EVENT_UNIT_DONE`
-    cuando el sensor confirma la vuelta (M1–M4) o termina el pulso (M5–M6), y
-    solo entonces la GUI cobra.
+    cuando se completa el pulso temporizado de 3 s, y solo entonces la GUI
+    cobra.
   - Si un motor falla, se descarta el resto de la cola y lo no entregado no se
     cobra ni reduce stock.
   - *Pendiente:* decidir si un pedido parcialmente entregado debe
@@ -751,7 +760,7 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
   - Sin prueba de motores: el panel ya no encola solicitudes `admin_test`.
   - Guardas: el ajuste de saldo, el reset y el guardado de precios se rechazan
     con `Espere a que termine el despacho` si hay una compra activa.
-  - *Pendiente:* historial de ventas/recaudación y diagnóstico de sensores.
+  - *Pendiente:* historial de ventas/recaudación.
 
 ### P2 — Extras / V2.0 (según documento de arquitectura §7)
 
@@ -780,7 +789,7 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 | 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Precios mutables + stock en NVS | `gui_display.c` |
 | 3 | ~~Stock/saldo se descuentan antes del motor~~ **Resuelto** | Cobro por unidad confirmada | `gui_display_on_unit_dispatched()` |
 | 4 | ~~Encolado no atómico~~ **Resuelto** | Lote todo-o-nada con `s_queue_mutex`; rechazo entero si no cabe | `motor_control_enqueue_batch()` |
-| 5 | ~~Sin *homing*~~ **Resuelto** | Homing secuencial M1–M4 con timeout de 10 s | `motor_control_home_all()` |
+| 5 | ~~Sin *homing*~~ **No aplica** | Estrategia eliminada: los 6 canales son de lazo abierto con pulso de 3 s | `motor_control.c` |
 | 6 | ~~Estado de GUI sin mutex~~ **Resuelto** | `s_state_mutex` protege todo el estado | `gui_display.c` |
 | 7 | ~~Pines I2C sin verificar~~ **Resuelto** | SDA=IO32, SCL=IO25 | `board_config.h` |
 | 8 | Táctil sin calibrar (ejes/espejo) | Pulsaciones en zona equivocada | `BOARD_TOUCH_*` |
@@ -794,8 +803,8 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
   pull-up por software: cargaría el optoacoplador.
 - **El relé se apaga en el bloque `cleanup`.** No eliminar esa garantía al
   refactorizar: es la protección contra motores girando indefinidamente.
-- **`g_dispatch_mutex` debe existir antes de crear `task_despacho`.** El homing
-  también lo usa, así que debe crearse antes de `motor_control_init()`.
+- **`g_dispatch_mutex` debe existir antes de crear `task_despacho`.** Se crea en
+  `app_main()` antes de `motor_control_init()`.
 - **NVS antes de la GUI:** `nvs_flash_init()` debe ejecutarse antes de
   `gui_display_init()` para que la carga de saldo/stock funcione.
 - **El guardado NVS ocurre con el Mutex de estado tomado.** Es una escritura
@@ -849,9 +858,7 @@ Al arrancar, el log esperado es similar a:
 app_main: Maquina Expendedora - 6 canales (ESP32-32E 4.0")
 app_main: Mutex de despacho creado (un motor a la vez)
 app_main: Bus I2C0 listo (SDA=IO32, SCL=IO25, 100000 Hz)
-motor_control: Homing inicial de 4 canales con sensor (M1-M4, timeout 10000 ms por canal)
-motor_control: Homing completado: M1-M4 en reposo (M5-M6 por tiempo)
-motor_control: Control de motores listo (relees 0x20, sensores 0x21 en M1-M4, M5-M6 por tiempo 2000 ms)
+motor_control: Control de motores listo (relees 0x20; M1-M6 por tiempo, 3000 ms)
 gui_display: NVS vacia: saldo RD$ 0.00, stock 10 y precios por defecto
 gui_display: MicroSD montada en /sdcard
 gui_display: Tactil XPT2046 listo (CS=IO33, 1000000 Hz)
@@ -880,17 +887,17 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
    pulsado coincida con el dibujado.
 6. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
    reiniciar. Sin archivos se muestra `[Espacio Imagen]`.
-7. **Homing:** reiniciar con un motor M1–M4 fuera de reposo y comprobar en el log
-   que el canal alcanza `SENSOR_HOME_LEVEL` en menos de 10 s y que solo se
-   energiza un relé a la vez. M5–M6 no participan del homing.
+7. **Motores:** con `BRINGUP_TEST_MOTOR1 = 1` debe verse un pulso de 3 s sobre
+   M1 al arrancar y el relé debe soltarse al terminar. Para producción, poner
+   `BRINGUP_TEST_MOTOR1 = 0`.
 8. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
    con el valor correcto.
 9. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
-   saldo baja **solo cuando el motor termina la vuelta**.
+   saldo baja **solo cuando termina el pulso de 3 s**.
 10. **Persistencia:** apagar y encender; el saldo, el stock y los precios deben
     conservarse.
-11. **Fallo controlado:** desconectar un sensor de M1–M4 o bloquear un motor y
-    verificar que el pedido se cancela sin cobrar las unidades no entregadas.
+11. **Fallo controlado:** desconectar el bus I2C o bloquear un motor y verificar
+    que el pedido se cancela sin cobrar las unidades no entregadas.
 12. **Modo administración:** pulsar `ADM` junto a `Confirmar`; debe abrirse el
     teclado numérico. Probar:
     - Clave incorrecta: muestra `Contrasena incorrecta` y limpia el campo.
@@ -915,8 +922,10 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 > Las dos decisiones **inmediatas** (push y flasheo) están en la
 > [§0](#0-preguntas-para-ti-responde-debajo-de-cada-una).
 
-1. ¿Los módulos de relé conmutan de forma fiable con 3.3 V en la entrada?
-   (Algunos módulos de 5 V con optoacoplador necesitan adaptador de nivel).
+1. ~~¿El módulo de relé conmuta de forma fiable con el jumper en HIGH y entradas
+   de 3.3 V?~~ **Resuelto (2026-11-04):** no era fiable. Se pasó el jumper a
+   **LOW** y se añadió un **NPN inversor** por canal; el PCF8574 enciende con
+   HIGH. Los 6 motores quedaron validados.
 2. ¿Se requiere otro método de acceso al modo administración (SD, Wi-Fi, PIN)?
    Hoy es un botón `ADM` en el panel inferior con contraseña provisional `0000`.
 3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
@@ -939,7 +948,8 @@ Se considerará la versión 1.0 funcional cuando:
 5. Confirmar una compra despacha los productos **uno a uno**, sin reinicios.
 6. Si un despacho falla, **no se cobra** lo no entregado (hoy ya se cumple por
    unidad; falta definir el reembolso del pedido parcial).
-7. Tras un corte de energía, el sistema hace *homing* en M1–M4 y vuelve a operar.
+7. Tras un corte de energía, el sistema arranca con los relés apagados y vuelve a
+   operar con el pulso de 3 s.
 8. Stock y recaudación sobreviven a un reinicio (NVS).
 
 ---
@@ -959,6 +969,13 @@ Se considerará la versión 1.0 funcional cuando:
   no llames a LVGL desde `task_monedero` ni desde `motor_task`.
 - Si tocas el flujo de compra, mantén el cobro **solo** en
   `gui_display_on_unit_dispatched()`.
+- La guía de despacho es única para los 6 canales: `motor_control_dispatch_one()`
+  toma `g_dispatch_mutex`, pone el bit en **HIGH** 3 s (NPN satura → `IN` a 0 V)
+  y lo devuelve a **LOW** siempre. `BOARD_RELAY_ACTIVE_LOW = 0` es obligatorio
+  con el NPN.
+- **Sensores (siguiente etapa):** está previsto añadir el PCF8574 `0x21` con
+  divisores de tensión. No lo reintroduzcas a medias: si lo haces, actualiza
+  `motor_control`, `board_config.h` y este documento en el mismo cambio.
 - La marca `admin_test` viaja en `motor_request_t` y `motor_event_t`: si añades
   una ruta de despacho nueva, propágala para que un test nunca cobre saldo.
 - Mantén el patrón actual: un `.h` con API documentada y un `.c` con
