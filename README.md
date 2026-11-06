@@ -27,7 +27,7 @@ El funcionamiento es el siguiente:
 - Monedero deshabilitado en el banco actual: el saldo se carga desde `ADM`.
 
 **Pendiente:**
-- Reintroducir la lectura de sensores de posición por canal con un segundo PCF8574 (`0x21`) y divisores de tensión (planificado para la siguiente etapa).
+- Reintroducir la lectura de sensores de posición de **M1–M4** con un segundo PCF8574 (`0x21`) y divisores de tensión; **M5 y M6** seguirán por tiempo (planificado para la siguiente etapa).
 - MicroSD: el montaje falla con `sdmmc_card_init failed (0x107)`; solo afecta la carga de imágenes.
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).
 
@@ -72,7 +72,7 @@ El funcionamiento es el siguiente:
 ### Bus I2C y Expansor (PCF8574)
 - El módulo expansor se conecta al puerto *I2C Peripheral Interface* de la pantalla (SDA, SCL, 3.3V, GND).
 - **Expansor de relés (dirección 0x20):** los pines P0–P5 van a la **base** de cada transistor NPN a través de 1 kΩ; el colector va al `IN` de cada módulo de relé y el emisor a GND.
-- **Expansor de sensores (dirección 0x21):** reservado para la siguiente etapa (lectura de sensores de posición con divisores de tensión). Todavía no está montado.
+- **Expansor de sensores (dirección 0x21):** reservado para la siguiente etapa (lectura de los sensores de posición **M1–M4** con divisores de tensión). Todavía no está montado.
 
 *Nota de polaridad:* el módulo de relé queda con el **jumper `H/L` en LOW** (su entrada `IN` se activa con 0 V). Como el transistor NPN **invierte** la señal, el PCF8574 debe sacar **HIGH (3.3 V)** para encender el motor y **LOW (0 V)** para apagarlo. Por eso `BOARD_RELAY_ACTIVE_LOW = 0` y el registro sombra se escribe sin invertir. En el log se ve `0x20 = 0x01` al encender M1 y `0x20 = 0x00` al apagar.
 

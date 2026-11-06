@@ -3,7 +3,7 @@
 > **Estado de implementación:** **Fase P1 (Firmware v1.0) validada en hardware el 2026-11-04.**
 > Build limpio (`maquina_expendedora.bin` = **611 600 B**, 42 % de la partición libre).
 > Los 6 motores (M1–M6) se probaron físicamente. Pendiente: sensores de posición con el
-> segundo PCF8574 (`0x21`) y resolución del montaje de la MicroSD.
+> segundo PCF8574 (`0x21`) para los sensores de **M1–M4** y resolución del montaje de la MicroSD.
 
 ## 1. Plataforma de Desarrollo y Firmware
 El desarrollo del firmware NO utiliza Arduino IDE debido a sus limitaciones en entornos industriales complejos. Se ejecuta utilizando **ESP-IDF (Espressif IoT Development Framework)**, el estándar de la industria para microcontroladores ESP32, programando en **C nativo**.
@@ -65,7 +65,7 @@ Los seis canales usan la misma secuencia:
 | **Producto 5** | M5 | Pin P4 | Tiempo · pulso 3.0 s |
 | **Producto 6** | M6 | Pin P5 | Tiempo · pulso 3.0 s |
 
-*El expansor `0x21` **no está montado todavía**; queda reservado para la siguiente etapa (lectura de sensores de posición con divisores de tensión). P6 y P7 de `0x20` no se usan.*
+*El expansor `0x21` **no está montado todavía**; queda reservado para la siguiente etapa (lectura de los sensores de posición **M1–M4** con divisores de tensión; M5 y M6 por tiempo). P6 y P7 de `0x20` no se usan.*
 
 ## 5. Diseño de la Interfaz Gráfica (GUI)
 

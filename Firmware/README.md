@@ -50,7 +50,7 @@ Git). `compilar.ps1` conserva esa carpeta entre builds para no re-descargar LVGL
 
 - Alimentar el **PCF8574 a 3.3 V** (no 5 V) para mantener los niveles del bus I2C.
 - Los **6 relés** son módulos de **1 canal** con bobina de 12 V y entrada optoacoplada. El **jumper `H/L` va en LOW** (0 V en `IN` enciende). Entre el PCF8574 y cada `IN` hay un **transistor NPN inversor**: `EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`. Por eso el PCF8574 enciende con **HIGH**.
-- Los **6 canales** se despachan por tiempo; el expansor `0x21` **no está montado todavía** (reservado para sensores de posición).
+- Los **6 canales** se despachan por tiempo; el expansor `0x21` **no está montado todavía** (reservado para los sensores de posición **M1–M4**).
 - **Pines confirmados físicamente** (ver `board_config.h`):
   - I2C (PCF8574 0x20): **SDA=IO32, SCL=IO25**, 100 kHz.
   - TFT ST7796 (SPI2/HSPI): **SCLK=14, MOSI=13, MISO=12, CS=15, DC=2,
@@ -170,9 +170,9 @@ Firmware/
 
 1. ~~Cablear los 6 motores y verificar el pulso de 3 s en cada canal.~~ **Hecho
    el 2026-11-04:** los 6 motores giran y se detienen correctamente.
-2. **Sensores de posición (siguiente etapa):** añadir el segundo PCF8574 en
-   `0x21` con divisores de tensión en las entradas, y usar la lectura para
-   confirmar la entrega (o detener el motor antes del tiempo).
+2. **Sensores de posición M1–M4 (siguiente etapa):** añadir el segundo PCF8574
+   en `0x21` con divisores de tensión en las entradas, y usar la lectura para
+   detener el motor en el home. M5 y M6 seguirán por tiempo.
 3. MicroSD: el montaje falla con `sdmmc_card_init failed (0x107)`; solo afecta
    las imágenes de los productos.
 4. Telemetría Wi-Fi y audio (V2.0).

@@ -14,8 +14,8 @@
 > (SRD-12VDC-SL-C) con **jumper `H/L` en LOW** y un **transistor NPN inversor**
 > por canal (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). El PCF8574
 > enciende con **HIGH** (`BOARD_RELAY_ACTIVE_LOW = 0`). **No hay sensores
-> montados**: el expansor `0x21` y los divisores de tensión quedan planificados
-> para la siguiente etapa.
+> montados**: el expansor `0x21` y los divisores de tensión para **M1–M4**
+> quedan planificados para la siguiente etapa (M5 y M6 seguirán por tiempo).
 >
 > **Monedero deshabilitado** (`BOARD_COIN_ACCEPTOR_ENABLED = 0`): sin IO35, sin
 > `task_monedero`; el saldo se carga desde el panel `ADM`.
@@ -343,7 +343,8 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
   y apaga con **LOW** (`BOARD_RELAY_ACTIVE_LOW = 0`, sin invertir el sombra).
 - **Los 6 canales (M1–M6)** se despachan en lazo abierto con un pulso de
   **3000 ms** (`MOTOR_TIMED_PULSE_MS`). No hay sensores ni divisores montados;
-  el expansor `0x21` está reservado para la siguiente etapa.
+  el expansor `0x21` está reservado para los sensores de **M1–M4** en la
+  siguiente etapa (M5 y M6 seguirán por tiempo).
 
 ### 2.3 MicroSD (SPI)
 
@@ -973,9 +974,10 @@ Se considerará la versión 1.0 funcional cuando:
   toma `g_dispatch_mutex`, pone el bit en **HIGH** 3 s (NPN satura → `IN` a 0 V)
   y lo devuelve a **LOW** siempre. `BOARD_RELAY_ACTIVE_LOW = 0` es obligatorio
   con el NPN.
-- **Sensores (siguiente etapa):** está previsto añadir el PCF8574 `0x21` con
-  divisores de tensión. No lo reintroduzcas a medias: si lo haces, actualiza
-  `motor_control`, `board_config.h` y este documento en el mismo cambio.
+- **Sensores (siguiente etapa):** está previsto añadir el PCF8574 `0x21` para
+  los sensores de **M1–M4** con divisores de tensión. M5 y M6 no llevan sensor.
+  No lo reintroduzcas a medias: si lo haces, actualiza `motor_control`,
+  `sensor_input`, `board_config.h` y este documento en el mismo cambio.
 - La marca `admin_test` viaja en `motor_request_t` y `motor_event_t`: si añades
   una ruta de despacho nueva, propágala para que un test nunca cobre saldo.
 - Mantén el patrón actual: un `.h` con API documentada y un `.c` con
