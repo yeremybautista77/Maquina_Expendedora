@@ -86,7 +86,6 @@ extern "C" {
  */
 typedef struct {
     const char *name;           /**< Nombre visible. */
-    const char *image_path;     /**< Ruta del activo en la MicroSD. */
     uint32_t price_cents;       /**< Precio unitario en centavos. */
     uint8_t stock;              /**< Existencias disponibles. */
     uint8_t quantity;           /**< Unidades seleccionadas por el usuario. */

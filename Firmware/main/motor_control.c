@@ -1,10 +1,14 @@
 /**
  * @file motor_control.c
- * @brief Control I2C de los 6 motores mediante el PCF8574 0x20.
+ * @brief Control I2C de los 6 motores mediante el PCF8574 0x20 y lectura de
+ *        los sensores de posicion M1..M4 por el PCF8574 0x21.
  *
- * Todos los canales se despachan en lazo abierto: se activa el rele del canal
- * durante MOTOR_TIMED_PULSE_MS y se apaga siempre al terminar. No hay
- * retroalimentacion.
+ * Estrategia:
+ *   - M1..M4 (con sensor): se energiza el rele y se espera el pulso de home
+ *     para detener el motor en la misma posicion en cada vuelta. El pulso por
+ *     tiempo actua como techo de seguridad si el sensor no responde.
+ *   - M5..M6 (sin sensor): lazo abierto con MOTOR_TIMED_PULSE_MS.
+ *   - Si el expansor 0x21 no responde, los 6 canales usan lazo abierto.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -17,14 +21,19 @@
 #include "board_config.h"
 #include "esp_log.h"
 #include "freertos/task.h"
+#include "sensor_input.h"
 
 static const char *TAG = "motor_control";
 
 _Static_assert(MOTOR_CHANNEL_COUNT == BOARD_CHANNEL_COUNT,
                "El numero de canales de motor debe coincidir con el hardware");
+_Static_assert(BOARD_SENSOR_CHANNEL_COUNT <= MOTOR_CHANNEL_COUNT,
+               "Los canales con sensor deben ser un subconjunto de los motores");
 
 /** Handle I2C del PCF8574 de relees (0x20). */
 static i2c_master_dev_handle_t s_relay_dev = NULL;
+
+/* La lectura del PCF8574 0x21 vive en sensor_input.c. */
 
 /** Registro sombra: bit n = 1 significa que el canal n esta activo. */
 static uint8_t s_relay_shadow = 0;
@@ -87,7 +96,7 @@ static esp_err_t add_expander(i2c_master_bus_handle_t bus, uint8_t address,
 }
 
 /**
- * @brief Escribe un byte en el PCF8574 de relees bajo el Mutex del bus.
+ * @brief Escribe un byte en un PCF8574 bajo el Mutex del bus.
  */
 static esp_err_t write_expander(i2c_master_dev_handle_t dev, uint8_t value)
 {
@@ -175,10 +184,46 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus)
         goto fail;
     }
 
-    ESP_LOGI(TAG,
-             "Control de motores listo (relees 0x%02X; M1-M%u por tiempo, %d ms)",
-             BOARD_I2C_ADDR_RELAY, (unsigned)MOTOR_CHANNEL_COUNT,
-             MOTOR_TIMED_PULSE_MS);
+    /*
+     * PCF8574 de sensores (0x21). Es opcional: si no responde, la maquina
+     * sigue funcionando en lazo abierto por tiempo. La gestion del expansor y
+     * la interpretacion del home viven en sensor_input.c.
+     */
+#if BOARD_SENSOR_ENABLED
+    esp_err_t sensor_err = sensor_input_init(i2c_bus);
+    if (sensor_err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "Sensores no disponibles (%s); M1-M%u pasaran a lazo abierto",
+                 esp_err_to_name(sensor_err),
+                 (unsigned)BOARD_SENSOR_CHANNEL_COUNT);
+    }
+#endif /* BOARD_SENSOR_ENABLED */
+
+    if (sensor_input_available()) {
+        ESP_LOGI(TAG,
+                 "Control de motores listo (relees 0x%02X; sensores 0x%02X en "
+                 "M1-M%u; M%u-M%u por tiempo %d ms)",
+                 BOARD_I2C_ADDR_RELAY, BOARD_I2C_ADDR_SENSOR,
+                 (unsigned)BOARD_SENSOR_CHANNEL_COUNT,
+                 (unsigned)(BOARD_SENSOR_CHANNEL_COUNT + 1),
+                 (unsigned)MOTOR_CHANNEL_COUNT, MOTOR_TIMED_PULSE_MS);
+    } else {
+        ESP_LOGI(TAG,
+                 "Control de motores listo (relees 0x%02X; M1-M%u por tiempo, "
+                 "%d ms)",
+                 BOARD_I2C_ADDR_RELAY, (unsigned)MOTOR_CHANNEL_COUNT,
+                 MOTOR_TIMED_PULSE_MS);
+    }
+
+#if BOARD_SENSOR_ENABLED && BOARD_SENSOR_HOMING_ENABLED
+    /*
+     * Homing opcional de arranque. Se ejecuta antes de crear motor_task, por
+     * lo que no compite con ningun despacho. Un fallo no impide arrancar.
+     */
+    if (sensor_input_available()) {
+        (void)motor_control_home_all();
+    }
+#endif
 
     return ESP_OK;
 
@@ -245,6 +290,157 @@ esp_err_t motor_control_set_relay(uint8_t channel, bool enabled)
 
     xSemaphoreGive(s_i2c_mutex);
     return err;
+}
+
+bool motor_control_sensors_available(void)
+{
+    return sensor_input_available();
+}
+
+bool motor_control_channel_uses_sensor(uint8_t channel)
+{
+    return sensor_input_is_channel(channel);
+}
+
+esp_err_t motor_control_read_sensors(uint8_t *out_mask)
+{
+    if (out_mask == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!sensor_input_available()) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    return sensor_input_read_mask(out_mask);
+}
+
+esp_err_t motor_control_read_sensor(uint8_t channel, bool *out_home)
+{
+    if (channel >= MOTOR_CHANNEL_COUNT || out_home == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!motor_control_channel_uses_sensor(channel)) {
+        /* M5/M6 no tienen micro-switch: se despachan por tiempo. */
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    esp_err_t err = sensor_input_read_channel(channel, out_home);
+    if (err == ESP_ERR_INVALID_STATE) {
+        /* El expansor no esta disponible: se informa como no soportado. */
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    return err;
+}
+
+esp_err_t motor_control_home_all(void)
+{
+    if (!sensor_input_available()) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (g_dispatch_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t result = ESP_OK;
+    ESP_LOGI(TAG, "Homing de M1-M%u (timeout %d ms por canal)",
+             (unsigned)BOARD_SENSOR_CHANNEL_COUNT,
+             BOARD_SENSOR_HOMING_TIMEOUT_MS);
+
+    for (uint8_t channel = 0; channel < BOARD_SENSOR_CHANNEL_COUNT; channel++) {
+        bool at_home = false;
+        esp_err_t err = motor_control_read_sensor(channel, &at_home);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Homing canal %u: fallo leyendo el sensor: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(err));
+            if (result == ESP_OK) {
+                result = err;
+            }
+            continue;
+        }
+        if (at_home) {
+            ESP_LOGI(TAG, "Homing canal %u: ya esta en reposo",
+                     (unsigned)(channel + 1));
+            continue;
+        }
+
+        if (xSemaphoreTake(g_dispatch_mutex,
+                           pdMS_TO_TICKS(BOARD_SENSOR_HOMING_TIMEOUT_MS +
+                                         2000)) != pdTRUE) {
+            ESP_LOGE(TAG, "Homing canal %u: Mutex de despacho ocupado",
+                     (unsigned)(channel + 1));
+            if (result == ESP_OK) {
+                result = ESP_ERR_TIMEOUT;
+            }
+            continue;
+        }
+
+        /* Se relee bajo el Mutex: el canal pudo moverse mientras se esperaba. */
+        err = motor_control_read_sensor(channel, &at_home);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Homing canal %u: fallo releyendo el sensor: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(err));
+        } else if (!at_home) {
+            ESP_LOGW(TAG, "Homing canal %u: fuera de reposo, energizando rele",
+                     (unsigned)(channel + 1));
+
+            err = motor_control_set_relay(channel, true);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Homing canal %u: no se pudo activar el rele: %s",
+                         (unsigned)(channel + 1), esp_err_to_name(err));
+            } else {
+                const TickType_t start = xTaskGetTickCount();
+                const TickType_t timeout =
+                    pdMS_TO_TICKS(BOARD_SENSOR_HOMING_TIMEOUT_MS);
+
+                for (;;) {
+                    bool home_now = false;
+                    err = motor_control_read_sensor(channel, &home_now);
+                    if (err != ESP_OK || home_now) {
+                        break;
+                    }
+                    if ((xTaskGetTickCount() - start) >= timeout) {
+                        err = ESP_ERR_TIMEOUT;
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(BOARD_SENSOR_POLL_MS));
+                }
+
+                /* El rele se apaga SIEMPRE, tambien si vencio el timeout. */
+                const esp_err_t off_err =
+                    motor_control_set_relay(channel, false);
+                if (off_err != ESP_OK) {
+                    ESP_LOGE(TAG, "Homing canal %u: FALLO APAGANDO EL RELE: %s",
+                             (unsigned)(channel + 1), esp_err_to_name(off_err));
+                    if (err == ESP_OK) {
+                        err = off_err;
+                    }
+                }
+
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "Homing canal %u: reposo alcanzado",
+                             (unsigned)(channel + 1));
+                } else {
+                    ESP_LOGE(TAG, "Homing canal %u: no se alcanzo el reposo: %s",
+                             (unsigned)(channel + 1), esp_err_to_name(err));
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_SETTLE_MS));
+        }
+
+        xSemaphoreGive(g_dispatch_mutex);
+
+        if (err != ESP_OK && result == ESP_OK) {
+            result = err;
+        }
+    }
+
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "Homing completado: M1-M%u en reposo",
+                 (unsigned)BOARD_SENSOR_CHANNEL_COUNT);
+    } else {
+        ESP_LOGW(TAG, "Homing incompleto (%s); se continua el arranque",
+                 esp_err_to_name(result));
+    }
+    return result;
 }
 
 esp_err_t motor_control_check_capacity(uint8_t count)
@@ -417,19 +613,126 @@ esp_err_t motor_control_dispatch_one(uint8_t channel, uint32_t mutex_timeout_ms)
 
     s_dispatching = true;
     bool relay_on = false;
+    esp_err_t result = ESP_OK;
 
-    esp_err_t result = motor_control_set_relay(channel, true);
-    if (result != ESP_OK) {
-        ESP_LOGE(TAG, "Canal %u: no se pudo activar el rele: %s",
-                 (unsigned)(channel + 1), esp_err_to_name(result));
-        goto cleanup;
+    bool use_sensor =
+        motor_control_channel_uses_sensor(channel) && sensor_input_available();
+    bool at_home = false;
+
+    /*
+     * Lectura inicial tolerante: si el sensor falla antes de arrancar, se usa
+     * el pulso por tiempo para no cancelar una compra por un glitch de I2C.
+     */
+    if (use_sensor) {
+        result = motor_control_read_sensor(channel, &at_home);
+        if (result != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "Canal %u: fallo leyendo el sensor (%s); se usara pulso "
+                     "por tiempo",
+                     (unsigned)(channel + 1), esp_err_to_name(result));
+            use_sensor = false;
+            result = ESP_OK;
+        }
     }
-    relay_on = true;
 
-    ESP_LOGI(TAG, "Canal %u: pulso por tiempo de %d ms",
-             (unsigned)(channel + 1), MOTOR_TIMED_PULSE_MS);
-    vTaskDelay(pdMS_TO_TICKS(MOTOR_TIMED_PULSE_MS));
-    ESP_LOGI(TAG, "Canal %u: pulso completado", (unsigned)(channel + 1));
+    if (use_sensor) {
+        /*
+         * Canal con sensor (M1..M4): el motor arranca y se detiene en el
+         * pulso de home. El tiempo solo actua como techo de seguridad.
+         */
+        if (!at_home) {
+            ESP_LOGW(TAG, "Canal %u: fuera de home; se completara la vuelta",
+                     (unsigned)(channel + 1));
+        }
+
+        result = motor_control_set_relay(channel, true);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Canal %u: no se pudo activar el rele: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(result));
+            goto cleanup;
+        }
+        relay_on = true;
+
+        bool left_home = !at_home;
+        const TickType_t leave_start = xTaskGetTickCount();
+
+        /* Si arranca en home, primero debe abandonarlo. */
+        if (at_home) {
+            const TickType_t leave_timeout =
+                pdMS_TO_TICKS(BOARD_SENSOR_LEAVE_TIMEOUT_MS);
+            for (;;) {
+                bool home_now = false;
+                result = motor_control_read_sensor(channel, &home_now);
+                if (result != ESP_OK) {
+                    break;
+                }
+                if (!home_now) {
+                    left_home = true;
+                    break;
+                }
+                if ((xTaskGetTickCount() - leave_start) >= leave_timeout) {
+                    ESP_LOGE(TAG, "Canal %u: el motor no abandono el home en %d ms",
+                             (unsigned)(channel + 1),
+                             BOARD_SENSOR_LEAVE_TIMEOUT_MS);
+                    result = ESP_ERR_TIMEOUT;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(BOARD_SENSOR_POLL_MS));
+            }
+        }
+
+        /* Esperar la vuelta completa: el sensor vuelve a home. */
+        if (result == ESP_OK && left_home) {
+            const TickType_t travel_start = xTaskGetTickCount();
+            const TickType_t travel_timeout =
+                pdMS_TO_TICKS(BOARD_SENSOR_TRAVEL_TIMEOUT_MS);
+
+            ESP_LOGI(TAG, "Canal %u: motor en marcha, esperando home",
+                     (unsigned)(channel + 1));
+
+            for (;;) {
+                bool home_now = false;
+                result = motor_control_read_sensor(channel, &home_now);
+                if (result != ESP_OK) {
+                    break;
+                }
+
+                const uint32_t elapsed_ms =
+                    (uint32_t)(xTaskGetTickCount() - travel_start) *
+                    portTICK_PERIOD_MS;
+
+                if (home_now && elapsed_ms >= BOARD_SENSOR_MIN_PULSE_MS) {
+                    ESP_LOGI(TAG, "Canal %u: home alcanzado en %lu ms",
+                             (unsigned)(channel + 1),
+                             (unsigned long)elapsed_ms);
+                    break;
+                }
+                if ((xTaskGetTickCount() - travel_start) >= travel_timeout) {
+                    ESP_LOGE(TAG,
+                             "Canal %u: timeout esperando home (%d ms)",
+                             (unsigned)(channel + 1),
+                             BOARD_SENSOR_TRAVEL_TIMEOUT_MS);
+                    result = ESP_ERR_TIMEOUT;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(BOARD_SENSOR_POLL_MS));
+            }
+        }
+    } else {
+        /* Canal sin sensor (M5/M6) o expansor 0x21 no disponible. */
+        result = motor_control_set_relay(channel, true);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Canal %u: no se pudo activar el rele: %s",
+                     (unsigned)(channel + 1), esp_err_to_name(result));
+            goto cleanup;
+        }
+        relay_on = true;
+
+        ESP_LOGI(TAG, "Canal %u: pulso por tiempo de %d ms",
+                 (unsigned)(channel + 1), MOTOR_TIMED_PULSE_MS);
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_TIMED_PULSE_MS));
+        ESP_LOGI(TAG, "Canal %u: pulso completado", (unsigned)(channel + 1));
+    }
 
 cleanup:
     /* El rele se apaga SIEMPRE, incluso ante error. */
@@ -475,8 +778,14 @@ void motor_task(void *arg)
                  (unsigned)(request.channel + 1), (unsigned)request.quantity);
 
         for (uint8_t unit = 0; unit < request.quantity; unit++) {
+            /*
+             * Margen para esperar a que otro motor termine su unidad: el
+             * recorrido por sensor (M1..M4) o el pulso por tiempo (M5..M6).
+             */
             const uint32_t mutex_wait_ms =
-                MOTOR_TIMED_PULSE_MS + MOTOR_SETTLE_MS + 1000;
+                BOARD_SENSOR_LEAVE_TIMEOUT_MS +
+                BOARD_SENSOR_TRAVEL_TIMEOUT_MS +
+                MOTOR_SETTLE_MS + 1000;
             esp_err_t err = motor_control_dispatch_one(request.channel, mutex_wait_ms);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Despacho abortado en canal %u (unidad %u): %s",

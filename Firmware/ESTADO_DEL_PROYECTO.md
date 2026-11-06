@@ -4,23 +4,29 @@
 > un desarrollador) que continúe el proyecto. Describe qué existe hoy, cómo está
 > construido, qué funciona, qué falta y en qué orden conviene atacarlo.
 >
-> **Última actualización:** 2026-11-04 (noche)
-> **Estado global:** **fase P1 validada en hardware.** Compila sin errores ni
-> warnings (`maquina_expendedora.bin` = **611 600 B**, 42 % libre). Los **6
-> motores (M1–M6)** se probaron físicamente: relé, giro de 3 s, parada y cobro
-> correcto. Pantalla, táctil, NVS y modo administración ya estaban validados.
+> **Última actualización:** 2026-11-05
+> **Estado global:** **firmware final de la versión 1.0.** Compila sin errores ni
+> warnings (`maquina_expendedora.bin` = **0x8fb10**, 588 560 B, 44 % libre).
+> Pantalla, táctil, NVS, modo administración y los **6 motores (M1–M6)** ya
+> estaban validados en hardware. Las novedades de esta fase (sensores M1–M4,
+> monedero habilitado, imágenes en flash) están **implementadas y compiladas**,
+> pero **pendientes de validación física** porque el hardware aún no se monta.
 >
-> **Montaje actual (2026-11-04):** 6 módulos de relé de **1 canal**
-> (SRD-12VDC-SL-C) con **jumper `H/L` en LOW** y un **transistor NPN inversor**
-> por canal (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). El PCF8574
-> enciende con **HIGH** (`BOARD_RELAY_ACTIVE_LOW = 0`). **No hay sensores
-> montados**: el expansor `0x21` y los divisores de tensión para **M1–M4**
-> quedan planificados para la siguiente etapa (M5 y M6 seguirán por tiempo).
+> **Montaje actual:** 6 módulos de relé de **1 canal** (SRD-12VDC-SL-C) con
+> **jumper `H/L` en LOW** y un **transistor NPN inversor** por canal
+> (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). El PCF8574 `0x20`
+> enciende con **HIGH** (`BOARD_RELAY_ACTIVE_LOW = 0`).
 >
-> **Monedero deshabilitado** (`BOARD_COIN_ACCEPTOR_ENABLED = 0`): sin IO35, sin
-> `task_monedero`; el saldo se carga desde el panel `ADM`.
-> **MicroSD:** el montaje falla (`sdmmc_card_init 0x107`); solo afecta las
-> imágenes de los productos.
+> **Sensores de posición (nuevo):** segundo PCF8574 en **`0x21`** para **M1–M4**
+> (P0–P3) con divisor 10 kΩ / 3.3 kΩ desde 12 V. `home = LOW`
+> (`BOARD_SENSOR_HOME_LEVEL = 0`), aún **sin confirmar con multímetro**. **M5 y
+> M6 siguen en lazo abierto por tiempo (3 s).** Si `0x21` no responde, los 6
+> canales caen automáticamente a lazo abierto.
+>
+> **Monedero habilitado** (`BOARD_COIN_ACCEPTOR_ENABLED = 1`): CH-926 por IO35
+> (pull-up externo 10 kΩ), acreditación 1/3/5/7 pulsos.
+> **MicroSD desactivada** (`BOARD_SD_ENABLED = 0`): las imágenes de producto van
+> embebidas en flash (`main/product_images.c`).
 
 ### Resumen rápido: qué está hecho y qué falta
 
@@ -29,46 +35,91 @@
 - [x] Monedero por ISR en IO35 con ventana de ráfaga y antirrebote.
 - [x] Filtro anti-saldo-fantasma en IO35: gracia de arranque, ancho de pulso
       válido y armado solo con la línea en reposo estable (ver §5.2).
-- [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). Los 6 canales en lazo abierto por tiempo (3 s).
+- [x] Despacho I2C de 6 motores con Mutex (un motor a la vez). **M1–M4 en lazo
+      cerrado con sensor de posición** (`0x21`); **M5–M6 por tiempo (3 s)** y
+      fallback automático a tiempo si el `0x21` no responde.
 - [x] Eventos de despacho (`UNIT_DONE` / `REQUEST_FAILED` / `IDLE`) y descarte
       de la cola ante fallo.
 - [x] GUI real: ST7796 320×480 por `esp_lcd`, XPT2046, LVGL 8.4, layout Flex
-      2×3 (`ROW_WRAP`, celdas al 48 %) con BMP de la MicroSD, panel de saldo y
-      modal `[Sí] [No]`.
+      2×3 (`ROW_WRAP`, celdas al 48 %) con **imágenes embebidas en flash**
+      (`product_images.c`, 52×52 RGB565) y panel inferior con saldo y total.
 - [x] Concurrencia: Mutex de estado y LVGL solo desde `task_gui`.
 - [x] Cobro diferido: confirmar solo encola; se cobra por unidad entregada.
 - [x] Encolado atómico: lote todo-o-nada con `s_queue_mutex` y
       `motor_control_check_capacity()`; si no cabe el pedido completo, se
       rechaza entero y la GUI pide reducir la cantidad.
 - [x] Modo administración por botón `ADM` junto a `Confirmar` + contraseña
-      provisional **0000** → panel con scroll de tres secciones: **saldo**
+      **20250456 (8 dígitos)** → panel con scroll de tres secciones: **saldo**
       (± RD$ 1/5/10/25, persistido en NVS al instante), **inventario** (reset a
       10) y **precios** (6 productos, ± RD$ 5 y guardado en NVS). Sin prueba de
       motores.
 - [x] Pines de hardware confirmados (I2C 32/25, TFT/táctil y MicroSD).
 - [x] Persistencia en NVS de saldo, stock y precios (carga al arrancar; guardado
       por moneda, unidad entregada o cambio de precio).
-- [x] GUI rediseñada: 2×3, cabecera nombre+precio, placeholder
-      `[Espacio Imagen]`, `Cant: N`, `Saldo:`, `Monto a Pagar:` y `Confirmar`.
-- [x] Build limpio (**611 600 B**, 42 % libre) y `Firmware/` versionado.
+- [x] GUI rediseñada: 2×3, cabecera nombre+precio, imagen embebida, `Cant: N`,
+      panel inferior de 82 px con `Saldo:`, `Total:` y `Confirmar`.
+- [x] **Monedero CH-926 habilitado** por IO35 (`BOARD_COIN_ACCEPTOR_ENABLED = 1`).
+- [x] **MicroSD desactivada** (`BOARD_SD_ENABLED = 0`): ya no se intenta montar.
+- [x] **Sensores M1–M4** por segundo PCF8574 `0x21` (`sensor_input.c`).
+- [x] Build limpio (**0x8fb10**, 44 % libre) y `Firmware/` versionado.
 
 **Falta (en orden de prioridad):**
 
-1. **Validar el resto de la placa real**: conectar monedero y el módulo de
-   relés; probar el pulso de 3 s en los 6 canales, NVS, rechazo por cola llena
-   y modo administración completo. La pantalla, el táctil y los colores ya
-   están validados.
-2. Pruebas automatizadas y CI (transversal).
-3. Extras V2.0 (telemetría Wi-Fi, audio, RFID, log en SD).
-4. Ampliar el modo administración con historial de ventas/recaudación.
+1. **Validar en placa el hardware nuevo**: montar los sensores M1–M4 con el
+   divisor 10 kΩ/3.3 kΩ y el segundo PCF8574 `0x21`; medir la polaridad real
+   (`home = LOW`), comprobar el log de arranque y decidir si se activa
+   `BOARD_SENSOR_HOMING_ENABLED = 1`.
+2. Probar el monedero CH-926 (1/3/5/7 pulsos) con la lógica de acreditación.
+3. Definir P4–P6 (nombre, precio e imagen): hoy tienen precios provisionales
+   RD$ 70/80/90 para pruebas de electrónica.
+4. Pruebas automatizadas y CI (transversal).
+5. Extras V2.0 (telemetría Wi-Fi, audio, RFID).
+6. Ampliar el modo administración con historial de ventas/recaudación.
 
-**Estado de las acciones de esta sesión:**
+**Estado de las acciones de esta sesión (2026-11-05):**
 
-- [x] Modo administración rediseñado: botón `ADM` + contraseña `0000`, ajuste
-      manual de saldo (± RD$ 1/5/10/25) y eliminación de la prueba de motores
-      del panel.
-- [x] Build limpio sin warnings → **616 960 B** (`0x96a00`), 41 % libre.
-- [x] Flasheo por COM5 y validación del monedero CH-926 en placa.
+- [x] Contraseña del modo administración cambiada a **20250456** (8 dígitos).
+- [x] Las cantidades del carrito vuelven a cero al cerrar cualquier pedido.
+- [x] Precios P1–P3 = RD$ 50/50/50 y P4–P6 = RD$ 70/80/90 (provisional).
+- [x] Imágenes de producto embebidas en flash; MicroSD desactivada.
+- [x] Build limpio sin warnings → **0x8fb10**, 44 % libre.
+- [x] Flasheo por **COM6** verificado (arranque, precios v3, SD desactivada,
+      `0x21` detectado, monedero armado). Sensores aún sin montar.
+
+### Fase final (2026-11-05): sensores, monedero, imágenes en flash
+
+1. **`sensor_input.c/.h` (nuevo):** único módulo que conoce el PCF8574 `0x21`.
+   Hace probe al arrancar, lee P0–P3 como entradas (escribe `0xFF`), reintenta
+   hasta 3 veces, interpreta `home` según `BOARD_SENSOR_HOME_LEVEL` y registra
+   el estado por canal. Si el expansor no responde, `sensor_input_is_ready()`
+   devuelve `false`.
+2. **`motor_control.c`:** M1–M4 usan lazo cerrado (giro hasta salir de `home`,
+   luego hasta volver a `home`, con timeout); M5–M6 mantienen el pulso fijo de
+   3 s. Si `0x21` falla al arrancar, los 6 canales caen a lazo abierto. Si el
+   sensor falla durante el giro, el relé se apaga y se reporta error sin cobrar.
+   El *homing* opcional existe pero está **desactivado**
+   (`BOARD_SENSOR_HOMING_ENABLED = 0`) hasta confirmar la polaridad real.
+3. **Monedero habilitado:** `BOARD_COIN_ACCEPTOR_ENABLED = 1`; CH-926 por IO35
+   con pull-up externo, acreditación 1/3/5/7 pulsos.
+4. **Imágenes en flash:** `herramientas/generar_imagenes.ps1` convierte
+   `imagenes_productos/pN.(bmp|png|jpg)` a `main/product_images.c/.h`
+   (52×52, RGB565 con bytes intercambiados para `LV_COLOR_16_SWAP=1`). Si falta
+   una imagen se genera un marcador de posición. La GUI ya no usa rutas ni la
+   MicroSD.
+5. **Productos y precios:** P1 “Galletas chocochip”, P2 “Galletas Saladas” y
+   P3 “Brownies” a RD$ 50; P4–P6 quedan como “Producto 4/5/6” con RD$ 70/80/90
+   **provisionales** para pruebas. Migración one-shot con clave NVS `prices_v`
+   (versión actual **3**).
+6. **MicroSD desactivada:** `BOARD_SD_ENABLED = 0`; `gui_display_mount_sd()`
+   retorna `ESP_ERR_NOT_SUPPORTED` y `main.c` lo registra como info.
+7. **Interfaz inferior:** panel de 82 px; `Saldo:` y `Total:` en una sola línea
+   (Montserrat 12, `LV_LABEL_LONG_DOT`); botón `ADM` 40×40 y `Confirmar`
+   110×60.
+8. **Contraseña de administración:** **20250456** (8 dígitos); el teclado valida
+   automáticamente al octavo dígito.
+9. **Carrito:** las cantidades se limpian al confirmar y se vuelven a forzar a
+   cero en `order_finalize_locked()` al cerrar cualquier pedido.
+10. **Build:** **0x8fb10** (588 560 B), **44 % libre**, sin warnings.
 
 ---
 
@@ -182,7 +233,7 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
    pulsación larga de 3 s (`GUI_ADMIN_LONG_PRESS_MS`, `long_press_time` del
    driver táctil). En su lugar, el panel inferior tiene un botón `ADM` de
    **46×40 px** junto a `Confirmar`.
-2. **Contraseña provisional 0000:** el botón abre un teclado numérico 3×4
+2. **Contraseña 0000 (histórico; hoy `20250456`):** el botón abre un teclado numérico 3×4
    (`1`–`9`, `C`, `0`, `OK`). El cuarto dígito se valida automáticamente;
    `C` limpia el campo y `OK` reintenta el envío. Con la clave incorrecta se
    muestra `Contrasena incorrecta`. El panel de ajustes solo se construye tras
@@ -249,9 +300,9 @@ Commit `3fbefa7` — `feat(firmware): pines confirmados, homing, NVS y rediseno 
 
 ### Historial superado (2026-11-04)
 
-> La estrategia anterior de los canales M1–M4 quedó eliminada por completo. El
-> firmware vigente no usa sensores ni `0x21`: los 6 canales se despachan por
-> tiempo con un pulso de 3 s.
+> Esta sección describe una etapa intermedia. El firmware **vigente**
+> (2026-11-05) sí usa sensores en **M1–M4** (`0x21`) y mantiene **M5–M6** por
+> tiempo; ver la “Fase final” al inicio de este documento.
 
 **Sesión anterior (fase P0):** API táctil migrada a `esp_lcd_touch_get_data()`,
 rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
@@ -262,19 +313,21 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Bloque | Estado | Qué falta / riesgo |
 | :--- | :---: | :--- |
 | Pines de hardware | ✅ Confirmado | — |
-| Monedero (ISR IO35) | ✅ Validado en placa | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25 |
-| Despacho I2C + Mutex | ✅ Validado en placa | 6 canales por tiempo (3 s); M1–M6 probados con el NPN |
+| Monedero (ISR IO35) | ✅ Implementado | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25. Falta prueba física final |
+| Despacho I2C + Mutex | ✅ Validado en placa | M1–M4 con sensor `0x21`; M5–M6 por tiempo (3 s); NPN validado |
 | Relés + transistor NPN | ✅ Validado en placa | PCF8574 HIGH = encendido; jumper `H/L` en LOW |
-| *Homing* de arranque | ➖ Eliminado | Ya no hay sensores: lazo abierto en M1–M6 |
-| Persistencia NVS | ✅ Implementado | Saldo validado tras reinicio; falta stock/precios |
-| GUI 2×3 + panel inferior | ✅ Implementado | Táctil y colores validados en placa |
+| Sensores M1–M4 (`0x21`) | ✅ Implementado | Falta montar hardware y confirmar polaridad `home = LOW` |
+| *Homing* de arranque | ⏸️ Desactivado | Implementado pero `BOARD_SENSOR_HOMING_ENABLED = 0` |
+| Persistencia NVS | ✅ Implementado | Saldo, stock y precios (`prices` + `prices_v`) |
+| GUI 2×3 + panel inferior | ✅ Implementado | Imágenes en flash; táctil y colores validados |
 | Cobro diferido por unidad | ✅ Implementado | Decidir reembolso de pedido parcial |
 | Encolado atómico | ✅ Implementado | Probar rechazo con la cola llena en placa |
-| Modo administración | ✅ Implementado | Botón `ADM` + clave `0000`; saldo, inventario y precios |
+| Modo administración | ✅ Implementado | Botón `ADM` + clave `20250456`; saldo, inventario y precios |
+| Imágenes de producto | ✅ Implementado | Embebidas en flash; P4–P6 usan marcador provisional |
 | Pruebas + CI | ❌ Falta (P2) | Sin tests automatizados |
 | V2.0 (Wi-Fi, audio, RFID) | ❌ Falta (P2) | Según arquitectura §7 |
-| Push a GitHub | ✅ Hecho | `origin/main` incluye la expansión del modo administración |
-| Flasheo + monitor | ✅ Hecho | COM5, ESP32-D0WD-V3, GUI validada |
+| Push a GitHub | ✅ Hecho | `origin/main` al día tras la fase final |
+| Flasheo + monitor | ✅ Hecho | COM6, ESP32-D0WD-V3, arranque verificado |
 
 ---
 
@@ -298,14 +351,13 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 1. **No usar Arduino.** Solo ESP-IDF + FreeRTOS en C.
 2. **Un solo motor a la vez.** Obligatorio por el Mutex de despacho (protege la
    fuente conmutada de 12 V de picos de corriente).
-3. **La MicroSD es obligatoria** para los activos gráficos (no cargar imágenes
-   en Flash/RAM interna).
+3. **Las imágenes de producto están embebidas en flash** (`product_images.c`,
+   52×52 RGB565). La **MicroSD está desactivada** (`BOARD_SD_ENABLED = 0`); no
+   se usa para activos gráficos ni para logs.
 4. **El monedero entra por IO35**, que es *input-only* y **no tiene pull-up
    interno**: requiere pull-up externo de 10 kΩ a 3.3 V. El firmware **no debe
    habilitar el pull-up por software** (ya está el externo y cargaría el opto).
-   **En el banco actual el monedero está deshabilitado**
-   (`BOARD_COIN_ACCEPTOR_ENABLED = 0`) y el saldo se carga desde `ADM`; para
-   reactivarlo, ponerlo en `1` y volver a cablear IO35 con su pull-up.
+   Está **habilitado** (`BOARD_COIN_ACCEPTOR_ENABLED = 1`).
 5. El PCF8574 debe alimentarse a **3.3 V**, no 5 V.
 6. **El saldo y el stock solo se descuentan cuando se completa el pulso de la
    unidad** (3 s). Confirmar la compra únicamente encola el pedido.
@@ -335,16 +387,21 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Dirección | Función | Bits |
 | :--- | :--- | :--- |
 | `0x20` | 6 módulos de relé (motores 12 V) | P0..P5 → canales 1..6 |
+| `0x21` | Sensores de posición M1–M4 | P0..P3 → canales 1..4 |
 
 - I2C0, **SDA = IO32, SCL = IO25** (confirmado físicamente), **100 kHz**.
 - Cada canal: **P0…P5 → 1 kΩ → BASE del NPN**, `EMISOR → GND`,
   `COLECTOR → IN` del módulo. El jumper `H/L` de los 6 módulos está en **LOW**
   (0 V en `IN` enciende). Como el NPN invierte, el PCF8574 enciende con **HIGH**
   y apaga con **LOW** (`BOARD_RELAY_ACTIVE_LOW = 0`, sin invertir el sombra).
-- **Los 6 canales (M1–M6)** se despachan en lazo abierto con un pulso de
-  **3000 ms** (`MOTOR_TIMED_PULSE_MS`). No hay sensores ni divisores montados;
-  el expansor `0x21` está reservado para los sensores de **M1–M4** en la
-  siguiente etapa (M5 y M6 seguirán por tiempo).
+- **M1–M4** usan sensor de posición por el PCF8574 `0x21` (P0–P3, entradas con
+  `0xFF`). El sensor se alimenta a 12 V y su señal entra por un divisor
+  **10 kΩ en serie + 3.3 kΩ a GND** (≈2.97 V en el pin). `home = LOW`
+  (`BOARD_SENSOR_HOME_LEVEL = 0`), pendiente de confirmar con multímetro.
+- **M5 y M6** siguen en **lazo abierto** con pulso de **3000 ms**
+  (`MOTOR_TIMED_PULSE_MS`). Si `0x21` no responde al arrancar, los 6 canales
+  caen automáticamente a lazo abierto.
+- El expansor `0x21` debe alimentarse a **3.3 V** (Vih = 2.31 V).
 
 ### 2.3 MicroSD (SPI)
 
@@ -356,8 +413,9 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | MOSI | IO23 |
 
 - **VSPI confirmado** (`SPI3_HOST`), montaje FAT en `/sdcard`.
-- Se usa `esp_vfs_fat_sdspi_mount()`. La SD **no** está en el periférico SDMMC
-  nativo, así que no hay que cambiar a `esp_vfs_fat_sdmmc_mount()`.
+- **Desactivada en el firmware actual** (`BOARD_SD_ENABLED = 0`): las imágenes
+  van en flash. El código de montaje con `esp_vfs_fat_sdspi_mount()` se conserva
+  para poder reactivarla con `BOARD_SD_ENABLED = 1`.
 
 ### 2.4 Pantalla TFT y táctil
 
@@ -433,8 +491,8 @@ cd Firmware
 
 ```
 Project build complete.
-maquina_expendedora.bin → 611 600 bytes (0x95510)
-Partición app 0x100000 → 42 % libre
+maquina_expendedora.bin → 588 560 bytes (0x8fb10)
+Partición app 0x100000 → 44 % libre
 Sin warnings del compilador en los archivos del proyecto.
 ```
 
@@ -452,13 +510,18 @@ Firmware/
 ├── compilar.ps1                # Sync a ruta ASCII + build/flash
 ├── README.md                   # Guía rápida de uso
 ├── ESTADO_DEL_PROYECTO.md      # Este documento
+├── imagenes_productos/         # p1..p6 (bmp/png/jpg) fuente de las imágenes
+├── herramientas/
+│   └── generar_imagenes.ps1    # Genera main/product_images.c/.h
 └── main/
-    ├── CMakeLists.txt          # Dependencias (ver abajo)
+    ├── CMakeLists.txt          # Dependencias + sensor_input + product_images
     ├── idf_component.yml       # LVGL, esp_lcd_st7796, esp_lcd_touch_xpt2046
     ├── board_config.h          # Pines, direcciones I2C, polaridades
-    ├── main.c                  # app_main: I2C, SD, callback de despacho, tareas
-    ├── motor_control.h/.c      # Relés (0x20), cola, Mutex, eventos y pulso de 3 s
+    ├── main.c                  # app_main: I2C, SD opcional, tareas
+    ├── motor_control.h/.c      # Relés (0x20), cola, Mutex, eventos
+    ├── sensor_input.h/.c       # PCF8574 0x21: sensores M1–M4
     ├── coin_acceptor.h/.c      # ISR IO35 y decodificación de ráfagas
+    ├── product_images.h/.c     # Imágenes embebidas (generado, no editar)
     └── gui_display.h/.c        # ST7796 + XPT2046 + LVGL, grid, modal, cobro
 ```
 
@@ -573,22 +636,23 @@ Orden de arranque en `app_main()`:
 
 ### 5.4 `gui_display` — interfaz real (ST7796 + XPT2046 + LVGL)
 
-- Modelo de 6 productos: nombre, ruta de imagen (`/sdcard/productos/pN.bmp`),
-  precio, stock y cantidad seleccionada.
+- Modelo de 6 productos: nombre, imagen embebida (`product_images.c`), precio,
+  stock y cantidad seleccionada.
 - Valores actuales: **stock inicial = 10** (persistido en NVS) y precios
   **mutables** en `s_products[i].price_cents`, persistidos en NVS. Valores de
-  fábrica: **RD$ 40/50/60/70/80/90** (4000..9000 centavos). Ya no existe
-  `k_product_prices` ni `GUI_USE_DEMO_PRICES`.
+  fábrica: **RD$ 50/50/50/70/80/90** (5000/5000/5000/7000/8000/9000 centavos).
+  P4–P6 son provisionales. Ya no existe `k_product_prices` ni
+  `GUI_USE_DEMO_PRICES`.
 - Layout:
   - Layout Flex **2 columnas × 3 filas** con `LV_FLEX_FLOW_ROW_WRAP` en el 83 %
-    superior (400 px). Cada celda mide **48 %** del ancho útil (≈150 px) y
+    superior (398 px). Cada celda mide **48 %** del ancho útil (≈150 px) y
     **127 px** de alto, lo que obliga a que solo entren dos celdas por fila.
   - Cada celda es un Flex en columna centrado: cabecera `Producto N\nRD$ XX.00`,
-    recuadro gris de 52×52 con el BMP o `[Espacio Imagen]`, y fila Flex con
-    `[-]`, `Cant: N` y `[+]` (botones de 34×34 px).
-  - Panel inferior fijo de 80 px (17 %) con Flex en fila:
-    `Saldo: RD$ 0.00`, `Monto a Pagar: RD$ 0.00` (reactivo) y botón
-    `Confirmar` de 118×64 px.
+    recuadro de 52×52 con la imagen embebida (o `[Espacio Imagen]` si falta), y
+    fila Flex con `[-]`, `Cant: N` y `[+]` (botones de 34×34 px).
+  - Panel inferior fijo de **82 px** con Flex en fila: `Saldo: RD$ 0.00`,
+    `Total: RD$ 0.00` (reactivo, una sola línea), botón `ADM` de 40×40 y
+    `Confirmar` de 110×60 px.
 - Reglas implementadas:
   - Cantidad entre 0 y `min(stock, 10)`.
   - `[-]`/`[+]` ajustan y recortan contra stock.
@@ -603,14 +667,16 @@ Orden de arranque en `app_main()`:
   - Carga saldo, stock y precios desde NVS (`storage_load_locked()`).
 - Persistencia:
   - `gui_display_load_state()` / `gui_display_save_state()` son la API pública.
-  - Namespace NVS `vending`: `balance` (int64), `stock` (blob de 6 bytes) y
-    `prices` (blob de 6 × `uint32_t` = 24 bytes).
+  - Namespace NVS `vending`: `balance` (int64), `stock` (blob de 6 bytes),
+    `prices` (blob de 6 × `uint32_t` = 24 bytes) y `prices_v` (uint8, versión
+    del esquema de precios; actual **3**).
   - Se guarda al acreditar monedas, al cambiar stock, al guardar precios y en
     cada unidad cobrada o entregada por un test
     (`gui_display_on_unit_dispatched()`).
-- **Modo administración** (botón `ADM` de 46×40 px junto a `Confirmar` +
-  contraseña provisional `0000`): el teclado numérico a pantalla completa se
-  valida antes de construir el panel del operador. El panel tiene un contenedor
+- **Modo administración** (botón `ADM` de 40×40 px junto a `Confirmar` +
+  contraseña **20250456**, 8 dígitos): el teclado numérico a pantalla completa
+  se valida antes de construir el panel del operador. El octavo dígito se envía
+  solo; `C` limpia y `OK` reintenta. El panel tiene un contenedor
   Flex vertical desplazable con tres secciones:
   - **Saldo:** saldo actual y ajuste manual `-1/-5/-10/-25` y `+1/+5/+10/+25`;
     cada pulsación persiste en NVS y refresca la pantalla principal.
@@ -626,10 +692,13 @@ Orden de arranque en `app_main()`:
   `task_gui`; **ninguna** llamada a LVGL ocurre fuera de `task_gui`.
 - `gui_display_confirm_purchase()`:
   - Valida modal abierto, stock, total > 0 y saldo suficiente.
-  - Limpia cantidades y registra el pedido en curso.
+  - Pone a cero las cantidades de los 6 productos y registra el pedido en curso.
   - **Solo encola** en `task_despacho`; **no** descuenta saldo ni stock.
   - Si el encolado falla a mitad, cancela las unidades no encoladas y no las
     cobra.
+- `order_finalize_locked()` vuelve a forzar las 6 cantidades a cero al cerrar el
+  pedido (compra completada, cancelada o fallida), de modo que el carrito
+  siempre queda vacío.
 - `gui_display_on_unit_dispatched(channel, admin_test)`:
   - Venta real: **único punto de cobro**; resta el precio al saldo y reduce el
     stock en 1 por cada unidad cuyo pulso de 3 s se completó.
@@ -655,7 +724,7 @@ Usuario → ajusta cantidades → "Confirmar" → modal → [Sí]
       → si un motor falla: MOTOR_EVENT_REQUEST_FAILED
          → se descarta la cola; lo no entregado no se cobra ni baja stock
 
-Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
+Administrador → botón "ADM" → contraseña 20250456 → panel → sección Saldo
       → ajuste manual +/- RD$ 1/5/10/25 → NVS + refresco de la GUI
 ```
 
@@ -688,7 +757,7 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 
 - [x] **Configurar precios y stock reales**
   - Precios mutables en `s_products[i].price_cents`, con valores de fábrica
-    RD$ 40/50/60/70/80/90 y persistencia en NVS (`prices`).
+    RD$ 50/50/50/70/80/90 y persistencia en NVS (`prices` + `prices_v`).
   - El modo administración permite ajustarlos en pasos de RD$ 5.
   - Stock inicial de 10 por producto y persistencia en NVS.
   - *Criterio:* los 6 productos tienen nombre y precio editables en un único
@@ -696,9 +765,9 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 
 - [ ] **Validación en la placa real (checklist §8)**
   - Flashear y confirmar en el log: `ST7796 listo`, `Tactil XPT2046 listo`,
-    `MicroSD montada` y `Control de motores listo`.
-  - Probar: monedas, compra de 1 unidad, pulso de 3 s en los 6 canales, cobro
-    diferido y persistencia NVS tras reinicio.
+    `Sensores listos en 0x21` (si está montado) y `Control de motores listo`.
+  - Probar: monedas (1/3/5/7 pulsos), compra de 1 unidad, sensores M1–M4,
+    temporización en M5–M6, cobro diferido y persistencia NVS tras reinicio.
   - *Criterio:* se completa el checklist de §8 sin fallos.
 
 - [x] **Calibrar el táctil y los colores**
@@ -711,9 +780,11 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 ### P1 — Robustez y consistencia
 
 - [x] **Rutina de *homing***
-  - ~~Implementada para M1–M4.~~ **Eliminada el 2026-11-04** junto con todo el
-    subsistema de sensores: los 6 canales usan un pulso de 3 s en lazo abierto.
-  - *Criterio:* ya no aplica; no hay retroalimentación de posición.
+  - Reintroducida junto con `sensor_input.c` para **M1–M4**. Al arrancar se
+    puede llevar cada mecanismo a `home` antes del primer despacho.
+  - Está **desactivada por seguridad** (`BOARD_SENSOR_HOMING_ENABLED = 0`)
+    hasta confirmar la polaridad real del sensor con multímetro.
+  - *Criterio:* activarla solo después de validar `home = LOW` y el divisor.
 
 - [x] **Descontar stock/saldo solo al confirmar el despacho**
   - Implementado **por unidad**: `motor_task` emite `MOTOR_EVENT_UNIT_DONE`
@@ -738,17 +809,18 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
   - *Criterio:* una compra se acepta completa o se rechaza completa.
 
 - [x] **Persistencia en NVS**
-  - Namespace `vending`: saldo (`balance`), stock de los 6 productos (`stock`) y
-    precios de los 6 productos (`prices`, 6 × `uint32_t`).
+  - Namespace `vending`: saldo (`balance`), stock de los 6 productos (`stock`),
+    precios (`prices`, 6 × `uint32_t`) y versión del esquema (`prices_v`).
   - Se carga en `gui_display_init()` y se guarda al acreditar monedas, al cobrar
     o entregar una unidad y al guardar precios desde el modo administración.
   - *Criterio:* apagar y encender conserva saldo, stock y precios.
 
 - [x] **Modo administración completo**
-  - Botón `ADM` de 46×40 px en el panel inferior, junto a `Confirmar`.
-  - Abre un teclado numérico con contraseña provisional `0000`; el cuarto dígito
-    se valida solo. Si la clave es incorrecta se muestra `Contrasena incorrecta`
-    y se limpia el campo. Solo tras el acceso correcto se construye el panel.
+  - Botón `ADM` de 40×40 px en el panel inferior, junto a `Confirmar`.
+  - Abre un teclado numérico con contraseña **20250456** (8 dígitos); el octavo
+    dígito se valida solo. Si la clave es incorrecta se muestra
+    `Contrasena incorrecta` y se limpia el campo. Solo tras el acceso correcto
+    se construye el panel.
   - **Saldo:** saldo actual y botones `-1/-5/-10/-25` y `+1/+5/+10/+25`. Cada
     pulsación actualiza `s_balance_cents`, guarda en NVS y refresca la GUI.
   - **Inventario:** muestra el stock de los 6 canales y el botón
@@ -790,7 +862,7 @@ Administrador → botón "ADM" → contraseña 0000 → panel → sección Saldo
 | 2 | ~~Precios demo y stock fijo~~ **Resuelto** | Precios mutables + stock en NVS | `gui_display.c` |
 | 3 | ~~Stock/saldo se descuentan antes del motor~~ **Resuelto** | Cobro por unidad confirmada | `gui_display_on_unit_dispatched()` |
 | 4 | ~~Encolado no atómico~~ **Resuelto** | Lote todo-o-nada con `s_queue_mutex`; rechazo entero si no cabe | `motor_control_enqueue_batch()` |
-| 5 | ~~Sin *homing*~~ **No aplica** | Estrategia eliminada: los 6 canales son de lazo abierto con pulso de 3 s | `motor_control.c` |
+| 5 | ~~Sin *homing*~~ **Reintroducido** | Homing opcional para M1–M4 (desactivado hasta validar polaridad) | `motor_control.c` |
 | 6 | ~~Estado de GUI sin mutex~~ **Resuelto** | `s_state_mutex` protege todo el estado | `gui_display.c` |
 | 7 | ~~Pines I2C sin verificar~~ **Resuelto** | SDA=IO32, SCL=IO25 | `board_config.h` |
 | 8 | Táctil sin calibrar (ejes/espejo) | Pulsaciones en zona equivocada | `BOARD_TOUCH_*` |
@@ -842,14 +914,12 @@ Build OK: C:\Users\asus\esp\build_maquina\maquina_expendedora.bin
 Para flashear (requiere placa conectada):
 
 ```powershell
-.\compilar.ps1 -Flash -Port COM3 -Monitor
+.\compilar.ps1 -Flash -Port COM6 -Monitor
 ```
 
-> **Estado 2026-10-25:** este comando se ejecutó y falló con
-> `Could not open COM3, the port is busy or doesn't exist.` No hay ningún puerto
-> COM presente en el equipo. Antes de reintentar: conectar la placa con un cable
-> de **datos**, comprobar que aparece en el Administrador de dispositivos y
-> sustituir `COM3` por el puerto real (`[System.IO.Ports.SerialPort]::GetPortNames()`).
+> **Estado 2026-11-05:** flasheo verificado por **COM6**. El puerto puede cambiar
+> entre sesiones: comprobarlo con
+> `[System.IO.Ports.SerialPort]::GetPortNames()` y usar el que aparezca.
 
 Salir del monitor: `Ctrl + ]`.
 
@@ -859,26 +929,29 @@ Al arrancar, el log esperado es similar a:
 app_main: Maquina Expendedora - 6 canales (ESP32-32E 4.0")
 app_main: Mutex de despacho creado (un motor a la vez)
 app_main: Bus I2C0 listo (SDA=IO32, SCL=IO25, 100000 Hz)
-motor_control: Control de motores listo (relees 0x20; M1-M6 por tiempo, 3000 ms)
-gui_display: NVS vacia: saldo RD$ 0.00, stock 10 y precios por defecto
-gui_display: MicroSD montada en /sdcard
+motor_control: PCF8574 de relees detectado en 0x20
+sensor_input: Sensores listos en 0x21: M1-M4 = P0-P3 (nivel inicial 0xFF; home = LOW)
+motor_control: Control de motores listo (relees 0x20; sensores 0x21 en M1-M4; M5-M6 por tiempo)
+coin_acceptor: Monedero listo en GPIO35 (activo en LOW, pulso 10-150 ms, ventana 300 ms, gracia 2500 ms)
+app_main: MicroSD desactivada; las imagenes van en flash
+gui_display: Precios migrados a v3: RD$ 50 en P1-P3 y RD$ 70/80/90 en P4-P6
 gui_display: Tactil XPT2046 listo (CS=IO33, 1000000 Hz)
-gui_display: ST7796 listo (320x480, SPI2, 40 MHz)
+gui_display: ST7796 listo (320x480, SPI1, 40 MHz)
 gui_display: GUI lista: ST7796 320x480 + XPT2046 + LVGL 8.4
-gui_display: task_gui iniciada (LVGL + tactil)
 app_main: Arranque completado. Sistema en espera de monedas.
 ```
 
-Si la SD o la pantalla no están conectadas, se emite un warning y el sistema
-sigue arrancando (sin imágenes o sin interfaz, respectivamente).
+Si la pantalla no está conectada, se emite un error y el sistema no arranca la
+GUI; si el `0x21` no responde, los 6 canales pasan a lazo abierto por tiempo.
 
 ### Checklist de puesta en marcha en la placa real
 
 1. **Flashear** con `.\compilar.ps1 -Flash -Port COMx -Monitor`.
 2. **Layout:** confirmar visualmente 6 celdas en 2 columnas × 3 filas, sin
    productos agrupados en una sola fila ni solapados con el panel inferior.
-3. **Confirmar el log:** debe aparecer `ST7796 listo`, `Tactil XPT2046 listo` y
-   `MicroSD montada`. Si falta alguno, revisar pines/alimentación.
+3. **Confirmar el log:** debe aparecer `ST7796 listo`, `Tactil XPT2046 listo`,
+   `MicroSD desactivada` y `Control de motores listo`. Si `0x21` está montado,
+   también `Sensores listos en 0x21`.
 4. **Colores y orientación:** si los colores salen invertidos, cambiar
    `BOARD_TFT_INVERT_COLOR`; si rojo/azul están cambiados, cambiar
    `BOARD_TFT_USE_BGR_ORDER`; si la imagen está girada/espejada, ajustar
@@ -886,23 +959,28 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 5. **Táctil:** pulsar cada esquina. Si el eje X/Y está intercambiado o invertido,
    ajustar `BOARD_TOUCH_SWAP_XY/MIRROR_X/MIRROR_Y`. Repetir hasta que el botón
    pulsado coincida con el dibujado.
-6. **Imágenes:** copiar `p1.bmp`…`p6.bmp` (64×64) a `/sdcard/productos/` y
-   reiniciar. Sin archivos se muestra `[Espacio Imagen]`.
-7. **Motores:** con `BRINGUP_TEST_MOTOR1 = 1` debe verse un pulso de 3 s sobre
-   M1 al arrancar y el relé debe soltarse al terminar. Para producción, poner
-   `BRINGUP_TEST_MOTOR1 = 0`.
-8. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
+6. **Imágenes:** ya van embebidas. Para cambiarlas, copiar `pN.(bmp|png|jpg)` a
+   `Firmware/imagenes_productos/` y ejecutar
+   `herramientas/generar_imagenes.ps1`; si falta una, se muestra
+   `[Espacio Imagen]`.
+7. **Motores:** M1–M4 deben girar hasta que el sensor detecte el paso y volver a
+   `home`; M5–M6 giran 3 s. Si `0x21` no responde, todos giran 3 s.
+8. **Sensores:** con los mecanismos en reposo, el log debe mostrar `home
+   (reposo)` en M1–M4. Si muestran `fuera de home`, revisar el divisor y la
+   polaridad (`BOARD_SENSOR_HOME_LEVEL`).
+9. **Monedero:** insertar RD$ 1/5/10/25 y verificar que el saldo sube en pantalla
    con el valor correcto.
-9. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
-   saldo baja **solo cuando termina el pulso de 3 s**.
-10. **Persistencia:** apagar y encender; el saldo, el stock y los precios deben
+10. **Compra de prueba:** seleccionar 1 unidad, confirmar y comprobar que el
+    saldo baja **solo cuando la unidad se entrega**.
+11. **Carrito:** al terminar la compra, todas las cantidades deben volver a 0.
+12. **Persistencia:** apagar y encender; el saldo, el stock y los precios deben
     conservarse.
-11. **Fallo controlado:** desconectar el bus I2C o bloquear un motor y verificar
+13. **Fallo controlado:** desconectar el bus I2C o bloquear un motor y verificar
     que el pedido se cancela sin cobrar las unidades no entregadas.
-12. **Modo administración:** pulsar `ADM` junto a `Confirmar`; debe abrirse el
+14. **Modo administración:** pulsar `ADM` junto a `Confirmar`; debe abrirse el
     teclado numérico. Probar:
     - Clave incorrecta: muestra `Contrasena incorrecta` y limpia el campo.
-    - Clave `0000`: abre el panel con scroll.
+    - Clave `20250456`: abre el panel con scroll.
     - Saldo: `+1/+5/+10/+25` y `-1/-5/-10/-25` ajustan el saldo, refrescan la
       pantalla principal y sobreviven a un reinicio.
     - Inventario: `Rellenar Stock (Reset a 10)` deja los 6 productos a 10 y
@@ -910,7 +988,7 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
     - Precios: `[-]`/`[+]` cambian el borrador en RD$ 5; `Guardar Precios`
       actualiza la pantalla principal y persiste tras reiniciar.
     - El panel **no** debe mostrar `Test M1`…`Test M6`.
-13. **Encolado atómico:** con la UI normal es difícil llenar la cola (máximo 6
+15. **Encolado atómico:** con la UI normal es difícil llenar la cola (máximo 6
     líneas por pedido, cola de 8 y un solo pedido a la vez). Para probar el
     rechazo, reducir temporalmente `MOTOR_QUEUE_LENGTH` a 1 o añadir una prueba
     de host; el pedido debe rechazarse entero con el aviso
@@ -928,12 +1006,12 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
    **LOW** y se añadió un **NPN inversor** por canal; el PCF8574 enciende con
    HIGH. Los 6 motores quedaron validados.
 2. ¿Se requiere otro método de acceso al modo administración (SD, Wi-Fi, PIN)?
-   Hoy es un botón `ADM` en el panel inferior con contraseña provisional `0000`.
+   Hoy es un botón `ADM` en el panel inferior con contraseña **20250456**.
 3. ¿La versión 1.0 debe incluir telemetría Wi-Fi o se deja para V2.0?
 4. ¿Un pedido parcialmente entregado debe reembolsarse completo o solo cobrar
    las unidades que salieron? (Hoy se cobran solo las entregadas).
-5. ¿Los precios de fábrica RD$ 40/50/60/70/80/90 son los definitivos? Ahora
-   pueden cambiarse desde el panel de administración y quedan en NVS.
+5. ¿Qué producto, precio e imagen van en **P4–P6**? Hoy usan “Producto 4/5/6”
+   con RD$ 70/80/90 **provisionales** para pruebas de electrónica.
 
 ---
 
@@ -941,7 +1019,7 @@ sigue arrancando (sin imágenes o sin interfaz, respectivamente).
 
 Se considerará la versión 1.0 funcional cuando:
 
-1. La pantalla muestra el grid 2×3 con imágenes desde la SD.
+1. La pantalla muestra el grid 2×3 con las imágenes embebidas en flash.
 2. El táctil permite ajustar cantidades y confirmar con modal.
 3. Los precios son editables desde el modo administración, persisten en NVS y
    el stock también sobrevive a un reinicio.
@@ -950,7 +1028,7 @@ Se considerará la versión 1.0 funcional cuando:
 6. Si un despacho falla, **no se cobra** lo no entregado (hoy ya se cumple por
    unidad; falta definir el reembolso del pedido parcial).
 7. Tras un corte de energía, el sistema arranca con los relés apagados y vuelve a
-   operar con el pulso de 3 s.
+   operar (M1–M4 con sensor si responde; M5–M6 por tiempo).
 8. Stock y recaudación sobreviven a un reinicio (NVS).
 
 ---
@@ -961,23 +1039,25 @@ Se considerará la versión 1.0 funcional cuando:
   (`../Documentacion/Documentacion Tecnica/documento_de_arquitectura_tecnico.md`)
   y este archivo.
 - **Respeta** las restricciones de §1 (C nativo, ESP-IDF, un motor a la vez,
-  SD obligatoria, IO35 con pull-up externo).
+  imágenes en flash, IO35 con pull-up externo).
 - **No compiles directamente** en la ruta de OneDrive: usa `compilar.ps1`.
 - **No edites** `C:\Users\asus\esp\maquina_expendedora` (copia temporal).
-- Los pines de `board_config.h` están **confirmados físicamente** (I2C 32/25,
-  TFT/táctil y MicroSD). No los cambies sin verificar de nuevo la placa.
+- Los pines de `board_config.h` están **confirmados físicamente** (I2C 32/25 y
+  TFT/táctil). No los cambies sin verificar de nuevo la placa.
 - La GUI ya está implementada: **no bloquees `task_gui`** con esperas largas y
   no llames a LVGL desde `task_monedero` ni desde `motor_task`.
 - Si tocas el flujo de compra, mantén el cobro **solo** en
   `gui_display_on_unit_dispatched()`.
-- La guía de despacho es única para los 6 canales: `motor_control_dispatch_one()`
-  toma `g_dispatch_mutex`, pone el bit en **HIGH** 3 s (NPN satura → `IN` a 0 V)
-  y lo devuelve a **LOW** siempre. `BOARD_RELAY_ACTIVE_LOW = 0` es obligatorio
-  con el NPN.
-- **Sensores (siguiente etapa):** está previsto añadir el PCF8574 `0x21` para
-  los sensores de **M1–M4** con divisores de tensión. M5 y M6 no llevan sensor.
-  No lo reintroduzcas a medias: si lo haces, actualiza `motor_control`,
-  `sensor_input`, `board_config.h` y este documento en el mismo cambio.
+- La guía de despacho es única: `motor_control_dispatch_one()` toma
+  `g_dispatch_mutex`, pone el bit en **HIGH** (NPN satura → `IN` a 0 V) y lo
+  devuelve a **LOW** siempre. `BOARD_RELAY_ACTIVE_LOW = 0` es obligatorio con el
+  NPN.
+- **Sensores:** `sensor_input.c` es el único módulo que conoce el `0x21`. M1–M4
+  usan lazo cerrado; M5–M6, tiempo. Si `0x21` no responde, todo cae a tiempo.
+  La polaridad real (`BOARD_SENSOR_HOME_LEVEL`) sigue sin confirmarse en físico.
+- **Imágenes:** `main/product_images.c/.h` es generado por
+  `herramientas/generar_imagenes.ps1`; no lo edites a mano. La MicroSD está
+  desactivada (`BOARD_SD_ENABLED = 0`).
 - La marca `admin_test` viaja en `motor_request_t` y `motor_event_t`: si añades
   una ruta de despacho nueva, propágala para que un test nunca cobre saldo.
 - Mantén el patrón actual: un `.h` con API documentada y un `.c` con

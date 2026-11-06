@@ -1,17 +1,19 @@
 /**
  * @file motor_control.h
- * @brief Control de los 6 motores de despacho mediante un unico PCF8574 (0x20)
- *        en el bus I2C y proteccion de la fuente con un Mutex de FreeRTOS.
+ * @brief Control de los 6 motores de despacho mediante el PCF8574 0x20 y
+ *        lectura de sensores M1..M4 por el PCF8574 0x21.
  *
  * Estrategia:
  *
- *   - Todos los canales M1..M6 se despachan en LAZO ABIERTO por tiempo.
+ *   - M1..M4 tienen micro-switch de posicion. El rele se energiza y el motor
+ *     se detiene al volver al home (misma posicion en cada vuelta). El pulso
+ *     por tiempo es solo el techo de seguridad si el sensor no responde.
+ *   - M5..M6 no tienen sensor: lazo abierto con MOTOR_TIMED_PULSE_MS.
+ *   - Si el PCF8574 0x21 no responde, los 6 canales usan lazo abierto.
  *   - El PCF8574 0x20 escribe el bit del canal: con el transistor NPN inversor
  *     y el jumper H/L del modulo en LOW, HIGH (3.3 V) activa el rele y LOW
  *     (0 V) lo desactiva.
- *   - Cada despacho mantiene el rele activo exactamente
- *     MOTOR_TIMED_PULSE_MS (3000 ms) y despues lo apaga SIEMPRE.
- *   - No hay retroalimentacion: el firmware escribe unicamente en 0x20.
+ *   - Cada despacho apaga el rele SIEMPRE al terminar, incluso ante error.
  *   - Solo un motor gira a la vez: motor_control_dispatch_one() toma
  *     g_dispatch_mutex antes de energizar el rele y lo libera al terminar.
  *   - Las solicitudes se encolan con motor_control_enqueue() y las consume
@@ -39,7 +41,7 @@ extern "C" {
 /** Cantidad de canales fisicos de la maquina. */
 #define MOTOR_CHANNEL_COUNT             6
 
-/** Duracion del pulso de despacho de cada motor (una vuelta del espiral). */
+/** Duracion del pulso para M5/M6 (sin sensor) o si 0x21 no responde. */
 #define MOTOR_TIMED_PULSE_MS            3000
 
 /** Pausa de asentamiento antes de liberar el Mutex / arrancar el siguiente motor. */
@@ -120,13 +122,16 @@ typedef void (*motor_event_cb_t)(const motor_event_t *event, void *ctx);
 extern SemaphoreHandle_t g_dispatch_mutex;
 
 /**
- * @brief Inicializa el PCF8574 0x20, la cola de despacho y el Mutex interno
- *        que protege el bus I2C.
+ * @brief Inicializa los PCF8574 0x20 (relees) y 0x21 (sensores), la cola de
+ *        despacho y el Mutex interno que protege el bus I2C.
+ *
+ * El expansor de sensores es opcional: si no responde, se registra un aviso y
+ * el sistema continua en lazo abierto por tiempo.
  *
  * @param i2c_bus Bus maestro I2C ya creado por app_main().
  * @return ESP_OK en exito; ESP_ERR_INVALID_ARG si el bus es NULL;
  *         ESP_ERR_NO_MEM si no hay memoria para colas/semaforos; error I2C si
- *         no se puede configurar el expansor.
+ *         no se puede configurar el expansor de relees.
  */
 esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus);
 
@@ -141,6 +146,58 @@ esp_err_t motor_control_init(i2c_master_bus_handle_t i2c_bus);
  *                false lo apaga (LOW fisico, NPN al corte).
  */
 esp_err_t motor_control_set_relay(uint8_t channel, bool enabled);
+
+/**
+ * @brief Indica si el PCF8574 de sensores (0x21) esta operativo.
+ *
+ * Si devuelve false, todos los canales se despachan en lazo abierto.
+ */
+bool motor_control_sensors_available(void);
+
+/**
+ * @brief Indica si un canal tiene sensor de posicion.
+ *
+ * @param channel Canal 0..5.
+ * @return true para M1..M4; false para M5..M6.
+ */
+bool motor_control_channel_uses_sensor(uint8_t channel);
+
+/**
+ * @brief Lee los cuatro sensores en una sola transaccion I2C.
+ *
+ * Solo los bits P0..P3 tienen significado fisico (M1..M4); P4..P7 no se usan.
+ *
+ * @param[out] out_mask Mascara cruda del PCF8574 (bit 0 = M1).
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_NOT_SUPPORTED si 0x21 no esta
+ *         disponible o error de I2C.
+ */
+esp_err_t motor_control_read_sensors(uint8_t *out_mask);
+
+/**
+ * @brief Lee un sensor y lo interpreta segun BOARD_SENSOR_HOME_LEVEL.
+ *
+ * Solo valido para M1..M4. Para M5/M6 devuelve ESP_ERR_NOT_SUPPORTED.
+ *
+ * @param channel Canal 0..5.
+ * @param[out] out_home true si el mecanismo esta en reposo/home.
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_NOT_SUPPORTED o error de I2C.
+ */
+esp_err_t motor_control_read_sensor(uint8_t channel, bool *out_home);
+
+/**
+ * @brief Lleva a home los canales M1..M4 que quedaron a mitad de vuelta.
+ *
+ * Rutina SECUENCIAL: toma g_dispatch_mutex antes de energizar cada canal y lo
+ * libera al terminar, de modo que nunca hay dos motores alimentados a la vez.
+ * Cada canal tiene un timeout de seguridad; si vence, el rele se apaga y se
+ * continua con el siguiente.
+ *
+ * Solo se invoca automaticamente si BOARD_SENSOR_HOMING_ENABLED = 1.
+ *
+ * @return ESP_OK si todos los canales quedaron en reposo; ESP_ERR_TIMEOUT si
+ *         alguno no lo logro; ESP_ERR_NOT_SUPPORTED si no hay sensores.
+ */
+esp_err_t motor_control_home_all(void);
 
 /**
  * @brief Encola una solicitud de despacho (una entrada por producto).
@@ -211,15 +268,23 @@ bool motor_control_is_busy(void);
 /**
  * @brief Despacha UNA unidad de un canal, de forma exclusiva.
  *
+ * Canales M1..M4 (con sensor disponible):
  *   1. Toma g_dispatch_mutex (solo un motor a la vez).
- *   2. Energiza el rele del canal (HIGH fisico en 0x20).
- *   3. Mantiene el pulso MOTOR_TIMED_PULSE_MS (3000 ms).
- *   4. Apaga el rele SIEMPRE, aun si hubo error.
+ *   2. Lee el sensor y energiza el rele (HIGH fisico en 0x20).
+ *   3. Espera que el motor abandone el home y vuelva a el.
+ *   4. Apaga el rele SIEMPRE, aun si hubo error o timeout.
  *   5. Libera el Mutex.
+ *
+ * Canales M5..M6 (sin sensor) o si 0x21 no responde:
+ *   1. Toma g_dispatch_mutex.
+ *   2. Energiza el rele.
+ *   3. Mantiene el pulso MOTOR_TIMED_PULSE_MS (3000 ms).
+ *   4. Apaga el rele y libera el Mutex.
  *
  * @param channel          Canal 0..5.
  * @param mutex_timeout_ms Tiempo maximo para adquirir el Mutex.
- * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_INVALID_STATE o error de I2C.
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, ESP_ERR_INVALID_STATE, ESP_ERR_TIMEOUT
+ *         si el sensor no alcanza el home a tiempo, o error de I2C.
  */
 esp_err_t motor_control_dispatch_one(uint8_t channel, uint32_t mutex_timeout_ms);
 

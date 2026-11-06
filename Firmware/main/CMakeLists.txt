@@ -33,7 +33,9 @@ idf_component_register(
     SRCS
         "main.c"
         "motor_control.c"
+        "sensor_input.c"
         "coin_acceptor.c"
+        "product_images.c"
         "gui_display.c"
     INCLUDE_DIRS
         "."

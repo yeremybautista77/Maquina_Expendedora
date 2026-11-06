@@ -106,10 +106,11 @@ graph TD
 1. **El cerebro del sistema** es la placa Hosyond 4.0" con módulo **ESP32-32E**. Integra el regulador que genera el riel lógico de 3.3 V, el conector de pantalla y los puertos de expansión JST.
 2. **La potencia no pasa por el ESP32.** El microcontrolador solo entrega señales de control de baja corriente al expansor I2C; la conmutación de los 12 V la realizan los contactos de los relés.
 3. **El monedero está eléctricamente separado** de la lógica mediante un optoacoplador PC817. El pulso de 12 V se convierte en una señal de 3.3 V compatible con el pin IO35.
-4. **Un único expansor PCF8574 (`0x20`) actúa sobre los seis relés.** Cada salida P0–P5 pasa por un **transistor NPN inversor** (base 1 kΩ, emisor a GND, colector al `IN` del relé) porque el PCF8574 solo hunde corriente de forma fiable. El bus I2C solo transporta la orden; la conmutación de los 12 V la realizan los contactos de los relés.
-5. **Los periféricos SPI no comparten bus entre sí**: la pantalla y el táctil usan SPI2; la MicroSD usa SPI3.
-6. **El riel de 5 V es exclusivo de la placa base.** El LM2596 no alimenta relés ni motores; solo entrega los 5 V que la placa Hosyond convierte internamente a 3.3 V.
-7. **Los seis motores se despachan por tiempo.** El firmware activa el relé del canal durante 3 s y lo apaga, sin retroalimentación de posición.
+4. **Expansor `0x20` para los seis relés.** Cada salida P0–P5 pasa por un **transistor NPN inversor** (base 1 kΩ, emisor a GND, colector al `IN` del relé) porque el PCF8574 solo hunde corriente de forma fiable. El bus I2C solo transporta la orden; la conmutación de los 12 V la realizan los contactos de los relés.
+5. **Expansor `0x21` para los sensores de posición M1–M4.** P0–P3 leen la señal de cada sensor a través de un divisor 10 kΩ / 3.3 kΩ desde 12 V. El módulo se alimenta a 3.3 V.
+6. **Los periféricos SPI no comparten bus entre sí**: la pantalla y el táctil usan SPI2; la MicroSD usa SPI3 (desactivada en el firmware actual).
+7. **El riel de 5 V es exclusivo de la placa base.** El LM2596 no alimenta relés ni motores; solo entrega los 5 V que la placa Hosyond convierte internamente a 3.3 V.
+8. **M1–M4 usan lazo cerrado** con sensor de posición; **M5–M6** se despachan por tiempo (3 s). Si el `0x21` no responde, los seis canales caen a lazo abierto.
 
 ### 1.3 Identificación de la placa base
 
@@ -457,6 +458,9 @@ El PCF8574 satura el NPN para encender (`IN` = 0 V) y lo deja al corte para apag
 
 ### 4.5 Lector MicroSD
 
+> **Desactivada en el firmware actual** (`BOARD_SD_ENABLED = 0`): las imágenes van
+> embebidas en flash. El conector se conserva en la placa, pero no se monta.
+
 | Función | GPIO | Señal | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Chip Select | IO5 | CS | Bus SPI3 |
@@ -466,19 +470,31 @@ El PCF8574 satura el NPN para encender (`IN` = 0 V) y lo deja al corte para apag
 | Alimentación | 3V3 | VCC | 3.3 V |
 | Referencia | GND | GND | 0 V |
 
+### 4.5b Sensores de posición (expansor `0x21`)
+
+| Sensor | Señal | Entrada | Acondicionamiento |
+| :---: | :--- | :---: | :--- |
+| M1 | Salida del sensor | P0 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
+| M2 | Salida del sensor | P1 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
+| M3 | Salida del sensor | P2 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
+| M4 | Salida del sensor | P3 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
+
+`home = LOW` (`BOARD_SENSOR_HOME_LEVEL = 0`), pendiente de confirmar con multímetro.
+El PCF8574 `0x21` se alimenta a **3.3 V**.
+
 ### 4.6 Matriz de canales: relés y motores
 
-| Canal | Motor | Tipo de motor | Relé `0x20` | Contacto | Estrategia de despacho |
+| Canal | Motor | Tipo de motor | Relé `0x20` | Sensor `0x21` | Estrategia de despacho |
 | :---: | :---: | :--- | :---: | :---: | :--- |
-| **1** | M1 | LK20052 · 3 hilos | P0 | COM1 / NO1 | Tiempo · pulso 3.0 s |
-| **2** | M2 | LK20052 · 3 hilos | P1 | COM2 / NO2 | Tiempo · pulso 3.0 s |
-| **3** | M3 | LK20052 · 3 hilos | P2 | COM3 / NO3 | Tiempo · pulso 3.0 s |
-| **4** | M4 | LK20052 · 3 hilos | P3 | COM4 / NO4 | Tiempo · pulso 3.0 s |
-| **5** | M5 | LK20052 Fy-007 · 2 hilos | P4 | COM5 / NO5 | Tiempo · pulso 3.0 s |
-| **6** | M6 | LK20052 Fy-007 · 2 hilos | P5 | COM6 / NO6 | Tiempo · pulso 3.0 s |
+| **1** | M1 | LK20052 · 3 hilos | P0 | P0 | Lazo cerrado |
+| **2** | M2 | LK20052 · 3 hilos | P1 | P1 | Lazo cerrado |
+| **3** | M3 | LK20052 · 3 hilos | P2 | P2 | Lazo cerrado |
+| **4** | M4 | LK20052 · 3 hilos | P3 | P3 | Lazo cerrado |
+| **5** | M5 | LK20052 Fy-007 · 2 hilos | P4 | — | Tiempo · pulso 3.0 s |
+| **6** | M6 | LK20052 Fy-007 · 2 hilos | P5 | — | Tiempo · pulso 3.0 s |
 | — | — | — | P6 / P7 | — | No usado |
 
-*Todos los canales se despachan en lazo abierto. El bit del canal en `0x20` se pone en **LOW (0 V)** durante 3000 ms y luego en **HIGH (3.3 V)**. P6 y P7 permanecen en nivel alto.*
+*El bit del canal en `0x20` se pone en **HIGH (3.3 V)** durante el despacho (el NPN lleva `IN` a 0 V) y vuelve a **LOW (0 V)** al terminar. P6 y P7 permanecen en nivel bajo.*
 
 ### 4.7 Distribución de borneras y conectores
 
@@ -486,7 +502,7 @@ El PCF8574 satura el NPN para encender (`IN` = 0 V) y lo deja al corte para apag
 | :--- | :--- | :--- | :--- |
 | Alimentación principal | Bornera atornillada 2 pines | 12 V / GND | Fuente conmutada |
 | Entrada de placa | JST o bornera 2 pines | 5 V / GND | LM2596 |
-| I2C Peripheral Interface | JST 4 pines | 3.3 V / GND / SDA / SCL | PCF8574 `0x20` |
+| I2C Peripheral Interface | JST 4 pines | 3.3 V / GND / SDA / SCL | PCF8574 `0x20` (relés) y `0x21` (sensores) |
 | Expand the input pin | JST | IO35 / 3.3 V / GND | Salida del PC817 |
 | Salida de relés | Bornera por canal | COM / NO | Motores |
 | Alimentación de bobinas | Bornera 2 pines | 12 V / GND | Módulo de relés |

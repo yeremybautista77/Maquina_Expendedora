@@ -315,7 +315,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Mutex de despacho creado (un motor a la vez)");
 
     /*
-     * 2. Bus I2C + PCF8574 de relees (0x20).
+     * 2. Bus I2C + PCF8574 de relees (0x20) + PCF8574 de sensores (0x21).
      */
     i2c_master_bus_handle_t i2c_bus = NULL;
     if (init_i2c_bus(&i2c_bus) == ESP_OK) {
@@ -331,8 +331,9 @@ void app_main(void)
     /*
      * 3. Monedero: GPIO35 + ISR + cola de pulsos.
      *
-     * En esta version no se usa monedero fisico: el saldo se carga desde el
-     * panel ADM. Se omite la inicializacion para no leer una linea flotante.
+     * Con BOARD_COIN_ACCEPTOR_ENABLED = 1 se inicializa el CH-926 y el saldo se
+     * acredita por monedas (ademas del panel ADM). Con 0 se omite por completo
+     * para no leer una linea flotante.
      */
 #if !BOARD_COIN_ACCEPTOR_ENABLED
     ESP_LOGW(TAG, "Monedero omitido: saldo administrado desde el panel ADM");
@@ -350,8 +351,10 @@ void app_main(void)
      *    imagenes de los productos al inicializarse.
      */
     esp_err_t sd_err = gui_display_mount_sd();
-    if (sd_err != ESP_OK) {
-        ESP_LOGW(TAG, "MicroSD no disponible (%s); las imagenes no se cargaran",
+    if (sd_err == ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGI(TAG, "MicroSD desactivada; las imagenes van en flash");
+    } else if (sd_err != ESP_OK) {
+        ESP_LOGW(TAG, "MicroSD no disponible (%s); se continua sin ella",
                  esp_err_to_name(sd_err));
     }
 

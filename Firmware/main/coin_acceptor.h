@@ -98,7 +98,7 @@ extern "C" {
 typedef void (*coin_acceptor_cb_t)(uint8_t pulses, uint32_t cents, void *ctx);
 
 /**
- * @brief Configura GPIO35 como entrada con interrupcion por flanco de bajada,
+ * @brief Configura GPIO35 como entrada con interrupcion por ambos flancos,
  *        instala el servicio de ISR y crea la cola de pulsos.
  *
  * GPIO35 no tiene pull-up interno: la placa debe aportar uno externo.

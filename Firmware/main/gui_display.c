@@ -6,7 +6,7 @@
  *   - Panel ST7796 320x480 por SPI2 (HSPI) con esp_lcd.
  *   - Tactil resistivo XPT2046 compartiendo el bus SPI2.
  *   - Retroiluminacion por LEDC.
- *   - Grid de 2 columnas x 3 filas con imagenes BMP de la MicroSD.
+ *   - Grid de 2 columnas x 3 filas con imagenes de producto embebidas en flash.
  *   - Panel inferior con saldo y boton de confirmacion.
  *   - Modal de resumen [Si] / [No] y toast de avisos.
  *
@@ -54,6 +54,7 @@
 #include "lvgl.h"
 #include "motor_control.h"
 #include "nvs.h"
+#include "product_images.h"
 #include "sdmmc_cmd.h"
 
 static const char *TAG = "gui_display";
@@ -66,11 +67,14 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 /** Lineas del buffer de dibujo de LVGL (320 x 40 x 2 B = 25.6 KB por buffer). */
 #define GUI_DRAW_BUF_LINES          40
 
-/** Altura del panel inferior (saldo + total + confirmar). 80 px = 16.7 %. */
-#define GUI_BOTTOM_PANEL_HEIGHT     80
+/** Altura del panel inferior (saldo + total + confirmar). 82 px = 17.1 %. */
+#define GUI_BOTTOM_PANEL_HEIGHT     82
 
 /** Tamano del recuadro de imagen de cada celda. */
 #define GUI_CELL_IMAGE_SIZE         52
+
+_Static_assert(PRODUCT_IMAGE_SIZE == GUI_CELL_IMAGE_SIZE,
+               "Regenera las imagenes con el mismo tamano de GUI_CELL_IMAGE_SIZE");
 
 /** Tamano de los botones tactiles [-] y [+]. */
 #define GUI_CELL_BUTTON_SIZE        34
@@ -107,10 +111,11 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
  * proyecto no tenga usuarios ni almacenamiento seguro, se valida en el propio
  * firmware y no se persiste en NVS.
  */
-#define GUI_ADMIN_PASSWORD          "0000"
+/** Contrasena del modo administracion (8 digitos). */
+#define GUI_ADMIN_PASSWORD          "20250456"
 
 /** Longitud exacta de la contrasena del modo administracion. */
-#define GUI_ADMIN_PASSWORD_LEN      4
+#define GUI_ADMIN_PASSWORD_LEN      8
 
 /** Cantidad de pasos de ajuste manual de saldo (+/- RD$ 1/5/10/25). */
 #define GUI_ADMIN_BALANCE_STEPS     4
@@ -131,6 +136,13 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
 
 /** Clave de los precios (blob de GUI_PRODUCT_COUNT uint32_t = 24 B). */
 #define GUI_NVS_KEY_PRICES          "prices"
+
+/**
+ * Version del esquema de precios. Se usa para aplicar una sola vez los
+ * precios reales definidos en el firmware sobre una NVS con valores viejos.
+ */
+#define GUI_NVS_KEY_PRICE_VERSION   "prices_v"
+#define GUI_PRICE_VERSION_CURRENT   3
 
 /* --- Precios -------------------------------------------------------------- */
 
@@ -153,24 +165,18 @@ _Static_assert(GUI_PRODUCT_COUNT == BOARD_CHANNEL_COUNT,
  */
 
 static gui_product_t s_products[GUI_PRODUCT_COUNT] = {
-    { .name = "Producto 1", .image_path = "/sdcard/productos/p1.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
-    { .name = "Producto 2", .image_path = "/sdcard/productos/p2.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
-    { .name = "Producto 3", .image_path = "/sdcard/productos/p3.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
-    { .name = "Producto 4", .image_path = "/sdcard/productos/p4.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
-    { .name = "Producto 5", .image_path = "/sdcard/productos/p5.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
-    { .name = "Producto 6", .image_path = "/sdcard/productos/p6.bmp",
-      .price_cents = GUI_PRICE_UNSET_CENTS, .stock = GUI_DEFAULT_STOCK,
-      .quantity = 0 },
+    { .name = "Galletas chocochip", .price_cents = 5000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
+    { .name = "Galletas Saladas", .price_cents = 5000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
+    { .name = "Brownies", .price_cents = 5000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
+    { .name = "Producto 4", .price_cents = 7000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
+    { .name = "Producto 5", .price_cents = 8000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
+    { .name = "Producto 6", .price_cents = 9000,
+      .stock = GUI_DEFAULT_STOCK, .quantity = 0 },
 };
 
 /* --- Estado compartido (protegido por s_state_mutex) ---------------------- */
@@ -254,13 +260,6 @@ typedef struct {
     lv_obj_t *qty_label;        /**< Texto "Cant: N". */
     lv_obj_t *minus_btn;
     lv_obj_t *plus_btn;
-    /**
-     * Ruta en formato LVGL ("S:/productos/pN.bmp").
-     *
-     * lv_img_set_src() NO copia la cadena: guarda el puntero. Por eso debe
-     * vivir tanto como la imagen, no en la pila de create_cell().
-     */
-    char image_src[96];
 } gui_cell_widgets_t;
 
 static lv_obj_t *s_grid = NULL;
@@ -361,6 +360,16 @@ static void order_finalize_locked(void)
     s_order.active = false;
     s_order.pending_units = 0;
 
+    /*
+     * Al cerrar el pedido (compra completada o fallida) el carrito queda
+     * vacio: todas las cantidades vuelven a cero para que el cliente empiece
+     * una compra nueva desde el principio. Las cantidades ya se habian
+     * limpiado al confirmar; este reset es la garantia final.
+     */
+    for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
+        s_products[i].quantity = 0;
+    }
+
     if (s_order.failed) {
         if (s_order.delivered_units == 0) {
             set_toast_locked("Pedido cancelado. No se cobro nada.");
@@ -392,18 +401,19 @@ static void order_finalize_locked(void)
  * "prices"; si no existe o es invalida se usan los valores por defecto.
  *
  * Si la NVS esta vacia, no esta inicializada o el blob es invalido, se aplican
- * los valores por defecto (saldo 0, 10 unidades y RD$ 40..90 por producto).
+ * los valores por defecto (saldo 0, 10 unidades y los precios de fabrica:
+ * RD$ 50.00 en los productos 1-3 y RD$ 70/80/90 en 4-6).
  */
 static void storage_load_locked(void)
 {
     /* Valores de fabrica; solo se usan si la NVS no tiene precios validos. */
     static const uint32_t default_prices[GUI_PRODUCT_COUNT] = {
-        4000,   /* Producto 1: RD$ 40.00 */
-        5000,   /* Producto 2: RD$ 50.00 */
-        6000,   /* Producto 3: RD$ 60.00 */
-        7000,   /* Producto 4: RD$ 70.00 */
-        8000,   /* Producto 5: RD$ 80.00 */
-        9000,   /* Producto 6: RD$ 90.00 */
+        5000,                   /* Galletas chocochip: RD$ 50.00 */
+        5000,                   /* Galletas Saladas:   RD$ 50.00 */
+        5000,                   /* Brownies:           RD$ 50.00 */
+        7000,                   /* Producto 4: provisional RD$ 70.00 */
+        8000,                   /* Producto 5: provisional RD$ 80.00 */
+        9000,                   /* Producto 6: provisional RD$ 90.00 */
     };
 
     for (uint8_t i = 0; i < GUI_PRODUCT_COUNT; i++) {
@@ -453,7 +463,30 @@ static void storage_load_locked(void)
         }
     }
 
+    uint8_t price_version = 0;
+    if (nvs_get_u8(handle, GUI_NVS_KEY_PRICE_VERSION, &price_version) != ESP_OK) {
+        price_version = 0;
+    }
+
     nvs_close(handle);
+
+    /*
+     * Migracion de precios: la version 3 define los productos reales (P1-P3)
+     * y deja P4-P6 con precios provisionales para probar la electronica. Se
+     * aplica sobre NVS viejas; storage_save_locked() graba la version nueva
+     * para no repetirla en cada arranque.
+     */
+    if (price_version < GUI_PRICE_VERSION_CURRENT) {
+        s_products[0].price_cents = 5000;   /* Galletas chocochip     */
+        s_products[1].price_cents = 5000;   /* Galletas Saladas       */
+        s_products[2].price_cents = 5000;   /* Brownies               */
+        s_products[3].price_cents = 7000;   /* Producto 4 (provisional) */
+        s_products[4].price_cents = 8000;   /* Producto 5 (provisional) */
+        s_products[5].price_cents = 9000;   /* Producto 6 (provisional) */
+        ESP_LOGI(TAG,
+                 "Precios migrados a v%d: RD$ 50 en P1-P3 y RD$ 70/80/90 en P4-P6",
+                 GUI_PRICE_VERSION_CURRENT);
+    }
 
     ESP_LOGI(TAG,
              "NVS cargada: saldo RD$ %lld.%02lld | stock %u/%u/%u/%u/%u/%u",
@@ -510,6 +543,10 @@ static esp_err_t storage_save_locked(void)
         err = nvs_set_blob(handle, GUI_NVS_KEY_PRICES, prices, sizeof(prices));
     }
     if (err == ESP_OK) {
+        err = nvs_set_u8(handle, GUI_NVS_KEY_PRICE_VERSION,
+                         GUI_PRICE_VERSION_CURRENT);
+    }
+    if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
 
@@ -520,48 +557,6 @@ static esp_err_t storage_save_locked(void)
                  esp_err_to_name(err));
     }
     return err;
-}
-
-/* ==========================================================================
- *  Utilidades de archivos / rutas
- * ========================================================================== */
-
-static bool sd_file_exists(const char *path)
-{
-    if (path == NULL) {
-        return false;
-    }
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
-        return false;
-    }
-    fclose(file);
-    return true;
-}
-
-/**
- * Convierte "/sdcard/productos/p1.bmp" en "S:/productos/p1.bmp" para LVGL.
- *
- * El driver stdio de LVGL concatena CONFIG_LV_FS_STDIO_PATH ("/sdcard") con la
- * ruta que recibe DESPUES de la letra de unidad, sin insertar separadores. Por
- * eso la barra inicial es obligatoria: "/sdcard" + "/productos/p1.bmp".
- */
-static void to_lvgl_path(const char *sd_path, char *out, size_t out_len)
-{
-    if (sd_path == NULL || out == NULL || out_len == 0) {
-        return;
-    }
-
-    const size_t mount_len = strlen(BOARD_SD_MOUNT_POINT);
-    const char *relative = sd_path;
-    if (strncmp(sd_path, BOARD_SD_MOUNT_POINT, mount_len) == 0) {
-        relative = sd_path + mount_len;
-    }
-    while (*relative == '/') {
-        relative++;
-    }
-
-    snprintf(out, out_len, "%c:/%s", (char)LV_FS_STDIO_LETTER, relative);
 }
 
 /* ==========================================================================
@@ -746,8 +741,8 @@ static void create_cell(uint8_t index)
     lv_obj_set_style_text_font(cell->header_label, &lv_font_montserrat_12, 0);
 
     /*
-     * Recuadro gris claro para la imagen de la MicroSD. Si el BMP no existe se
-     * muestra "[Espacio Imagen]" centrado; si existe, se oculta el placeholder.
+     * Recuadro gris claro para la imagen del producto (embebida en flash). Si
+     * el generador no produjo la imagen, se muestra "[Espacio Imagen]".
      */
     cell->img_box = lv_obj_create(cell->cell);
     lv_obj_set_size(cell->img_box, GUI_CELL_IMAGE_SIZE, GUI_CELL_IMAGE_SIZE);
@@ -761,9 +756,11 @@ static void create_cell(uint8_t index)
     cell->img = lv_img_create(cell->img_box);
     lv_obj_center(cell->img);
 
-    to_lvgl_path(product->image_path, cell->image_src,
-                 sizeof(cell->image_src));
-    const bool has_image = sd_file_exists(product->image_path);
+    /*
+     * Imagen embebida en flash (product_images.c). Ya no depende de la
+     * MicroSD; si el generador no produjo la imagen, se muestra el placeholder.
+     */
+    const lv_img_dsc_t *image = product_images_get(index);
 
     cell->img_placeholder = lv_label_create(cell->img_box);
     lv_label_set_text(cell->img_placeholder, "[Espacio Imagen]");
@@ -776,9 +773,9 @@ static void create_cell(uint8_t index)
                                &lv_font_montserrat_10, 0);
     lv_obj_center(cell->img_placeholder);
 
-    if (has_image) {
-        /* cell->image_src es estatico: LVGL conserva el puntero. */
-        lv_img_set_src(cell->img, cell->image_src);
+    if (image != NULL) {
+        /* El descriptor vive en flash: LVGL solo guarda el puntero. */
+        lv_img_set_src(cell->img, image);
         lv_obj_add_flag(cell->img_placeholder, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(cell->img, LV_OBJ_FLAG_HIDDEN);
@@ -872,11 +869,11 @@ static void create_bottom_panel(void)
     lv_label_set_long_mode(s_balance_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_balance_label, LV_PCT(100));
     lv_obj_set_style_text_color(s_balance_label, lv_color_hex(0x2ECC71), 0);
-    lv_obj_set_style_text_font(s_balance_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_balance_label, &lv_font_montserrat_12, 0);
 
     s_total_label = lv_label_create(info);
-    lv_label_set_text(s_total_label, "Monto a Pagar:\nRD$ 0.00");
-    lv_label_set_long_mode(s_total_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(s_total_label, "Total: RD$ 0.00");
+    lv_label_set_long_mode(s_total_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_total_label, LV_PCT(100));
     lv_obj_set_style_text_color(s_total_label, lv_color_hex(0xE74C3C), 0);
     lv_obj_set_style_text_font(s_total_label, &lv_font_montserrat_12, 0);
@@ -893,7 +890,7 @@ static void create_bottom_panel(void)
      * No hay atajos ocultos: el acceso siempre pasa por la contrasena.
      */
     s_admin_button = lv_btn_create(s_bottom_panel);
-    lv_obj_set_size(s_admin_button, 46, 40);
+    lv_obj_set_size(s_admin_button, 40, 40);
     lv_obj_set_style_radius(s_admin_button, 8, 0);
     lv_obj_set_style_bg_color(s_admin_button, lv_color_hex(0x34495E), 0);
     lv_obj_set_style_bg_color(s_admin_button, lv_color_hex(0x2C3E50),
@@ -908,7 +905,7 @@ static void create_bottom_panel(void)
     lv_obj_center(admin_label);
 
     s_confirm_btn = lv_btn_create(s_bottom_panel);
-    lv_obj_set_size(s_confirm_btn, 118, 64);
+    lv_obj_set_size(s_confirm_btn, 110, 60);
     lv_obj_set_style_radius(s_confirm_btn, 10, 0);
     lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x27AE60), 0);
     lv_obj_set_style_bg_color(s_confirm_btn, lv_color_hex(0x1E8449),
@@ -1082,7 +1079,7 @@ static void admin_password_clear(void)
 static void admin_password_submit(void)
 {
     if (s_admin_password_len != GUI_ADMIN_PASSWORD_LEN) {
-        admin_password_status_set("Ingrese los 4 digitos");
+        admin_password_status_set("Ingrese los 8 digitos");
         return;
     }
 
@@ -1114,7 +1111,7 @@ static void on_admin_password_digit_clicked(lv_event_t *event)
     admin_password_refresh_label();
     admin_password_status_set("Ingrese la contrasena");
 
-    /* Al completar los 4 digitos se valida sin necesidad de pulsar OK. */
+    /* Al completar los 8 digitos se valida sin necesidad de pulsar OK. */
     if (s_admin_password_len == GUI_ADMIN_PASSWORD_LEN) {
         admin_password_submit();
     }
@@ -1749,7 +1746,7 @@ static void build_ui(void)
     /*
      * Area superior: contenedor Flex con ROW_WRAP. No se usa LV_GRID porque el
      * flex con ancho fijo por celda garantiza 2 columnas x 3 filas en 320x480.
-     * Ocupa todo el espacio por encima del panel inferior (400 px = 83.3 %).
+     * Ocupa todo el espacio por encima del panel inferior (398 px = 82.9 %).
      */
     s_grid = lv_obj_create(screen);
     lv_obj_set_size(s_grid, BOARD_TFT_H_RES,
@@ -1985,7 +1982,7 @@ static void gui_refresh_ui(void)
                           (long long)(snapshot.balance_cents / 100),
                           (long long)(snapshot.balance_cents % 100));
 
-    lv_label_set_text_fmt(s_total_label, "Monto a Pagar:\nRD$ %lld.%02lld",
+    lv_label_set_text_fmt(s_total_label, "Total: RD$ %lld.%02lld",
                           (long long)(selected_total_cents / 100),
                           (long long)(selected_total_cents % 100));
 
@@ -2317,7 +2314,7 @@ esp_err_t gui_display_init(void)
     /*
      * Precios, saldo y stock persistidos en NVS.
      * Si la NVS esta vacia se arranca con saldo 0, stock GUI_DEFAULT_STOCK y
-     * precios de fabrica (RD$ 40..90).
+     * precios de fabrica (RD$ 50.00 en P1-P3; RD$ 70/80/90 en P4-P6).
      */
     storage_load_locked();
 
@@ -2352,6 +2349,10 @@ esp_err_t gui_display_init(void)
 
 esp_err_t gui_display_mount_sd(void)
 {
+#if !BOARD_SD_ENABLED
+    /* Imagenes embebidas en flash: la MicroSD no se usa. */
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     if (s_sd_card != NULL) {
         return ESP_OK;
     }
@@ -2408,6 +2409,7 @@ esp_err_t gui_display_mount_sd(void)
     ESP_LOGI(TAG, "MicroSD montada en %s", BOARD_SD_MOUNT_POINT);
     sdmmc_card_print_info(stdout, s_sd_card);
     return ESP_OK;
+#endif /* BOARD_SD_ENABLED */
 }
 
 esp_err_t gui_display_unmount_sd(void)
