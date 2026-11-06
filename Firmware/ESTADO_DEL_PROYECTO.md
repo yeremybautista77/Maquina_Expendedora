@@ -7,10 +7,11 @@
 > **Última actualización:** 2026-11-05
 > **Estado global:** **firmware final de la versión 1.0.** Compila sin errores ni
 > warnings (`maquina_expendedora.bin` = **0x8fb10**, 588 560 B, 44 % libre).
-> Pantalla, táctil, NVS, modo administración y los **6 motores (M1–M6)** ya
-> estaban validados en hardware. Las novedades de esta fase (sensores M1–M4,
-> monedero habilitado, imágenes en flash) están **implementadas y compiladas**,
-> pero **pendientes de validación física** porque el hardware aún no se monta.
+> Pantalla, táctil, NVS, modo administración y los **6 canales** ya estaban
+> validados en hardware. En el banco se probó **un único motor recorriendo M1–M6**
+> (conectándolo a ambos expansores canal por canal): relé, giro y lectura del
+> sensor respondieron en cada posición. Queda pendiente el **montaje definitivo
+> de los 6 motores** y la prueba del **monedero con monedas reales**.
 >
 > **Montaje actual:** 6 módulos de relé de **1 canal** (SRD-12VDC-SL-C) con
 > **jumper `H/L` en LOW** y un **transistor NPN inversor** por canal
@@ -65,16 +66,17 @@
 
 **Falta (en orden de prioridad):**
 
-1. **Validar en placa el hardware nuevo**: montar los sensores M1–M4 con el
-   divisor 10 kΩ/3.3 kΩ y el segundo PCF8574 `0x21`; medir la polaridad real
-   (`home = LOW`), comprobar el log de arranque y decidir si se activa
-   `BOARD_SENSOR_HOMING_ENABLED = 1`.
-2. Probar el monedero CH-926 (1/3/5/7 pulsos) con la lógica de acreditación.
-3. Definir P4–P6 (nombre, precio e imagen): hoy tienen precios provisionales
+1. **Montaje definitivo de los 6 motores**: la prueba de banco se hizo con un
+   solo motor recorriendo M1–M6. Falta instalar los 6 a la vez y validar el
+   despacho secuencial completo.
+2. **Monedero CH-926**: probar con monedas reales la acreditación 1/3/5/7 pulsos.
+3. Confirmar con multímetro la polaridad del sensor (`home = LOW`) y el divisor
+   10 kΩ/3.3 kΩ; si es correcta, evaluar `BOARD_SENSOR_HOMING_ENABLED = 1`.
+4. Definir P4–P6 (nombre, precio e imagen): hoy tienen precios provisionales
    RD$ 70/80/90 para pruebas de electrónica.
-4. Pruebas automatizadas y CI (transversal).
-5. Extras V2.0 (telemetría Wi-Fi, audio, RFID).
-6. Ampliar el modo administración con historial de ventas/recaudación.
+5. Pruebas automatizadas y CI (transversal).
+6. Extras V2.0 (telemetría Wi-Fi, audio, RFID).
+7. Ampliar el modo administración con historial de ventas/recaudación.
 
 **Estado de las acciones de esta sesión (2026-11-05):**
 
@@ -83,8 +85,10 @@
 - [x] Precios P1–P3 = RD$ 50/50/50 y P4–P6 = RD$ 70/80/90 (provisional).
 - [x] Imágenes de producto embebidas en flash; MicroSD desactivada.
 - [x] Build limpio sin warnings → **0x8fb10**, 44 % libre.
-- [x] Flasheo por **COM6** verificado (arranque, precios v3, SD desactivada,
-      `0x21` detectado, monedero armado). Sensores aún sin montar.
+- [x] Flasheo por **COM6** verificado (arranque, precios, SD desactivada,
+      `0x21` detectado, monedero armado).
+- [x] Prueba de banco con **un solo motor recorriendo M1–M6**: relé y sensor
+      responden en cada canal; el log mostró `home` en el canal conectado.
 
 ### Fase final (2026-11-05): sensores, monedero, imágenes en flash
 
@@ -99,6 +103,9 @@
    sensor falla durante el giro, el relé se apaga y se reporta error sin cobrar.
    El *homing* opcional existe pero está **desactivado**
    (`BOARD_SENSOR_HOMING_ENABLED = 0`) hasta confirmar la polaridad real.
+   En la prueba de banco (un solo motor recorriendo M1–M6) el sensor respondió
+   en cada canal: el log marcó `home` en la posición conectada y `fuera de home`
+   en las demás.
 3. **Monedero habilitado:** `BOARD_COIN_ACCEPTOR_ENABLED = 1`; CH-926 por IO35
    con pull-up externo, acreditación 1/3/5/7 pulsos.
 4. **Imágenes en flash:** `herramientas/generar_imagenes.ps1` convierte
@@ -316,7 +323,7 @@ rutas LVGL corregidas a `S:/productos/pN.bmp` y `image_src` estático para
 | Monedero (ISR IO35) | ✅ Implementado | CH-926 NO + FAST: 1/3/5/7 pulsos = RD$ 1/5/10/25. Falta prueba física final |
 | Despacho I2C + Mutex | ✅ Validado en placa | M1–M4 con sensor `0x21`; M5–M6 por tiempo (3 s); NPN validado |
 | Relés + transistor NPN | ✅ Validado en placa | PCF8574 HIGH = encendido; jumper `H/L` en LOW |
-| Sensores M1–M4 (`0x21`) | ✅ Implementado | Falta montar hardware y confirmar polaridad `home = LOW` |
+| Sensores M1–M4 (`0x21`) | ✅ Probado en banco | Un solo motor recorriendo M1–M6; falta montaje definitivo y confirmar polaridad con multímetro |
 | *Homing* de arranque | ⏸️ Desactivado | Implementado pero `BOARD_SENSOR_HOMING_ENABLED = 0` |
 | Persistencia NVS | ✅ Implementado | Saldo, stock y precios (`prices` + `prices_v`) |
 | GUI 2×3 + panel inferior | ✅ Implementado | Imágenes en flash; táctil y colores validados |

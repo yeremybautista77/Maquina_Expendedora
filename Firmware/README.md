@@ -6,8 +6,10 @@ placa **ESP32-32E 4.0"**. La fuente de verdad de la arquitectura es
 
 > **Estado:** **firmware final de la versión 1.0 (2026-11-05).** Compila sin
 > errores ni warnings (`maquina_expendedora.bin` = **588 560 B / 0x8fb10**,
-> 44 % libre). Los **6 motores (M1–M6)** ya estaban validados en hardware;
-> sensores y monedero están implementados y **pendientes de prueba física**.
+> 44 % libre). Los **6 canales (M1–M6)**, pantalla, táctil y NVS se validaron en
+> hardware; en banco se probó **un solo motor recorriendo M1–M6** con ambos
+> expansores. Falta el montaje definitivo de los 6 motores y la prueba del
+> **monedero CH-926** con monedas reales.
 >
 > **Configuración actual de banco:** **monedero habilitado**
 > (`BOARD_COIN_ACCEPTOR_ENABLED = 1`), **sensores M1–M4** por PCF8574 `0x21`
@@ -186,9 +188,10 @@ Firmware/
 
 1. ~~Cablear los 6 motores y verificar el pulso de 3 s en cada canal.~~ **Hecho
    el 2026-11-04:** los 6 motores giran y se detienen correctamente.
-2. **Sensores de posición M1–M4:** ya implementados con el PCF8574 `0x21` y
-   `sensor_input.c`. Falta montar el hardware, confirmar `home = LOW` con
-   multímetro y, si procede, activar `BOARD_SENSOR_HOMING_ENABLED = 1`.
+2. **Sensores de posición M1–M4:** implementados con el PCF8574 `0x21` y
+   `sensor_input.c`; probados en banco con un solo motor recorriendo M1–M6.
+   Falta el montaje definitivo, confirmar `home = LOW` con multímetro y, si
+   procede, activar `BOARD_SENSOR_HOMING_ENABLED = 1`.
 3. **Monedero CH-926:** habilitado; falta la prueba física de 1/3/5/7 pulsos.
 4. **P4–P6:** definir nombre, precio e imagen (hoy provisionales RD$ 70/80/90).
 5. Telemetría Wi-Fi y audio (V2.0).

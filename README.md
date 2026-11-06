@@ -38,8 +38,10 @@ etapas anteriores.
 - MicroSD desactivada (`BOARD_SD_ENABLED = 0`).
 
 **Pendiente de validación física:**
-- Montar los sensores M1–M4, medir el divisor 10 kΩ/3.3 kΩ y confirmar que
-  `home = LOW`; el *homing* de arranque sigue desactivado por seguridad.
+- Montaje definitivo de los 6 motores: la prueba de banco se hizo con un solo
+  motor recorriendo M1–M6 (relé y sensor respondieron en cada canal).
+- Confirmar con multímetro que `home = LOW` y el divisor 10 kΩ/3.3 kΩ; el
+  *homing* de arranque sigue desactivado por seguridad.
 - Probar el monedero CH-926 con monedas reales.
 - Definir nombre, precio e imagen de **P4–P6** (hoy provisionales RD$ 70/80/90).
 - Pruebas automatizadas/CI y extras V2.0 (telemetría Wi-Fi, audio, RFID).

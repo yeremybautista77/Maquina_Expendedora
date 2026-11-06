@@ -4,9 +4,10 @@
 > Build limpio (`maquina_expendedora.bin` = **588 560 B / 0x8fb10**, 44 % de la
 > partición libre). Los 6 motores (M1–M6), la pantalla, el táctil y la NVS se
 > validaron físicamente. Los **sensores de posición M1–M4** con el segundo
-> PCF8574 (`0x21`) y el **monedero CH-926** están implementados y pendientes de
-> prueba física; las imágenes van embebidas en flash y la MicroSD está
-> desactivada.
+> PCF8574 (`0x21`) se probaron en banco con un solo motor recorriendo M1–M6;
+> falta el montaje definitivo de los 6 motores y la prueba del **monedero
+> CH-926** con monedas reales. Las imágenes van embebidas en flash y la MicroSD
+> está desactivada.
 
 ## 1. Plataforma de Desarrollo y Firmware
 El desarrollo del firmware NO utiliza Arduino IDE debido a sus limitaciones en entornos industriales complejos. Se ejecuta utilizando **ESP-IDF (Espressif IoT Development Framework)**, el estándar de la industria para microcontroladores ESP32, programando en **C nativo**.
