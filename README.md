@@ -63,8 +63,9 @@ etapas anteriores.
 ### Actuadores y Expansión I/O
 - **4x Motores Reductores 12V DC (LK20052, 3 hilos):** Canales M1–M4, con sensor de posición.
 - **2x Motores Reductores 12V DC (LK20052 Fy-007, 2 hilos):** Canales M5–M6, despachados por tiempo.
-- **1x Módulo Expansor I2C PCF8574 (NOYITO - Rojo):** Configurado con sus DIP switches en la dirección `0x20` (relés).
-- **1x Módulo Expansor I2C PCF8574 adicional:** Dirección `0x21`, entradas P0–P3 para los sensores de posición M1–M4 (alimentado a 3.3 V).
+- **1x Módulo Expansor I2C PCF8574 (NOYITO - Rojo):** Configurado con sus DIP switches en la dirección `0x20` (relés). La PCB de interconexión usa solo **P0–P5** (6 canales); `P6`, `P7` e `INT` quedan sin conectar.
+- **1x Módulo Expansor I2C PCF8574 adicional:** Dirección `0x21`, entradas para los sensores (alimentado a 3.3 V). La PCB cablea **P0–P5**: `P0`–`P3` para los sensores de M1–M4 y `P4`–`P5` **de reserva**, con su divisor ya montado, para cuando se cambien M5/M6 por motores con sensor.
+- **1x PCB de interconexión (100 × 100 mm, 2 capas):** concentra el bus I2C, los dos expansores, las 6 etapas NPN, los 6 divisores y el acondicionamiento del monedero. No lleva 12 V ni contactos de potencia. Especificación: `Firmware/IDEA_PCB_CONEXIONES.md`.
 - **4x Sensores de posición** (ópticos o micro-switch) con **divisor 10 kΩ en serie + 3.3 kΩ a GND** desde 12 V.
 - **6x Módulos de Relé de 1 canal (SRD-12VDC-SL-C, bobina 12V, jumper `H/L` en LOW):** Uno por motor. La entrada `IN` se activa en LOW (0 V) y se desactiva en HIGH.
 - **6x Transistores NPN + 6x Resistencias de 1 kΩ:** Inversor por canal entre el PCF8574 y la entrada `IN` del relé (`EMISOR`→GND, `BASE`→1 kΩ→P0…P5, `COLECTOR`→`IN`). El PCF8574 saca HIGH para encender.
@@ -90,7 +91,7 @@ etapas anteriores.
 ### Bus I2C y Expansor (PCF8574)
 - El módulo expansor se conecta al puerto *I2C Peripheral Interface* de la pantalla (SDA, SCL, 3.3V, GND).
 - **Expansor de relés (dirección 0x20):** los pines P0–P5 van a la **base** de cada transistor NPN a través de 1 kΩ; el colector va al `IN` de cada módulo de relé y el emisor a GND.
-- **Expansor de sensores (dirección 0x21):** P0–P3 reciben la señal de los sensores de posición **M1–M4** a través de los divisores 10 kΩ / 3.3 kΩ. El módulo se alimenta a 3.3 V. `home = LOW` (`BOARD_SENSOR_HOME_LEVEL = 0`), pendiente de confirmar con multímetro.
+- **Expansor de sensores (dirección 0x21):** P0–P3 reciben la señal de los sensores de posición **M1–M4** a través de los divisores 10 kΩ / 3.3 kΩ. **P4 y P5 llevan el mismo divisor montado pero sin sensor: quedan de reserva** para futuros motores con sensor. El módulo se alimenta a 3.3 V. `home = LOW` (`BOARD_SENSOR_HOME_LEVEL = 0`), pendiente de confirmar con multímetro.
 
 *Nota de polaridad:* el módulo de relé queda con el **jumper `H/L` en LOW** (su entrada `IN` se activa con 0 V). Como el transistor NPN **invierte** la señal, el PCF8574 debe sacar **HIGH (3.3 V)** para encender el motor y **LOW (0 V)** para apagarlo. Por eso `BOARD_RELAY_ACTIVE_LOW = 0` y el registro sombra se escribe sin invertir. En el log se ve `0x20 = 0x01` al encender M1 y `0x20 = 0x00` al apagar.
 

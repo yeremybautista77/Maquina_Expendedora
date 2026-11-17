@@ -32,7 +32,7 @@ El monedero emite ráfagas secuenciales que son leídas por el pin **IO35** conf
 
 ## 4. Control de Actuadores (Bus I2C)
 
-Se emplean **dos módulos expansores PCF8574** en el puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND): `0x20` para los relés y `0x21` para los sensores de posición.
+Se emplean **dos módulos expansores PCF8574** en el puerto *I2C Peripheral Interface* (SDA, SCL, 3.3V, GND): `0x20` para los relés y `0x21` para los sensores de posición. Ambos van montados sobre la **PCB de interconexión** (`Firmware/IDEA_PCB_CONEXIONES.md`), que cablea **solo 6 de los 8 GPIO** de cada expansor: `P0`–`P5` en el `0x20` (6 relés) y `P0`–`P5` en el `0x21` (4 sensores en uso + 2 entradas de reserva). Los pines `P6`, `P7` e `INT` de ambos módulos quedan sin conectar.
 
 ### 4.1 Estrategia de motores: lazo cerrado en M1–M4 y tiempo en M5–M6
 
@@ -74,7 +74,7 @@ Si `0x21` no responde al arrancar, **los 6 canales** usan el pulso fijo de **300
 | **Producto 5** | M5 | Pin P4 | — | Tiempo · 3.0 s |
 | **Producto 6** | M6 | Pin P5 | — | Tiempo · 3.0 s |
 
-*P6 y P7 de `0x20` no se usan; P4–P7 de `0x21` quedan libres.*
+*P6, P7 e INT de `0x20` no se usan. En el `0x21` se cablean P0–P5: P0–P3 para los sensores de M1–M4 y **P4–P5 con el divisor montado pero sin sensor**, de reserva para cuando M5/M6 se cambien por motores con sensor. P6, P7 e INT del `0x21` quedan libres.*
 
 ## 5. Diseño de la Interfaz Gráfica (GUI)
 

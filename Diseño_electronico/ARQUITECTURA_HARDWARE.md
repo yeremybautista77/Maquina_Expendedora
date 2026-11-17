@@ -107,7 +107,7 @@ graph TD
 2. **La potencia no pasa por el ESP32.** El microcontrolador solo entrega señales de control de baja corriente al expansor I2C; la conmutación de los 12 V la realizan los contactos de los relés.
 3. **El monedero está eléctricamente separado** de la lógica mediante un optoacoplador PC817. El pulso de 12 V se convierte en una señal de 3.3 V compatible con el pin IO35.
 4. **Expansor `0x20` para los seis relés.** Cada salida P0–P5 pasa por un **transistor NPN inversor** (base 1 kΩ, emisor a GND, colector al `IN` del relé) porque el PCF8574 solo hunde corriente de forma fiable. El bus I2C solo transporta la orden; la conmutación de los 12 V la realizan los contactos de los relés.
-5. **Expansor `0x21` para los sensores de posición M1–M4.** P0–P3 leen la señal de cada sensor a través de un divisor 10 kΩ / 3.3 kΩ desde 12 V. El módulo se alimenta a 3.3 V.
+5. **Expansor `0x21` para los sensores de posición.** `P0`–`P3` leen la señal de M1–M4 a través de un divisor 10 kΩ / 3.3 kΩ desde 12 V. El módulo se alimenta a 3.3 V. La PCB de interconexión deja **cableados 6 divisores** (`P0`–`P5`): los dos extra (`S4`, `S5`) quedan de reserva para cuando M5/M6 se cambien por motores con sensor. `P6`, `P7` e `INT` no se conectan.
 6. **Los periféricos SPI no comparten bus entre sí**: la pantalla y el táctil usan SPI2; la MicroSD usa SPI3 (desactivada en el firmware actual).
 7. **El riel de 5 V es exclusivo de la placa base.** El LM2596 no alimenta relés ni motores; solo entrega los 5 V que la placa Hosyond convierte internamente a 3.3 V.
 8. **M1–M4 usan lazo cerrado** con sensor de posición; **M5–M6** se despachan por tiempo (3 s). Si el `0x21` no responde, los seis canales caen a lazo abierto.
@@ -478,9 +478,13 @@ El PCF8574 satura el NPN para encender (`IN` = 0 V) y lo deja al corte para apag
 | M2 | Salida del sensor | P1 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
 | M3 | Salida del sensor | P2 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
 | M4 | Salida del sensor | P3 | Divisor 10 kΩ serie + 3.3 kΩ a GND |
+| — | *(reserva)* | P4 | Divisor montado, sin sensor conectado (`S4`) |
+| — | *(reserva)* | P5 | Divisor montado, sin sensor conectado (`S5`) |
 
 `home = LOW` (`BOARD_SENSOR_HOME_LEVEL = 0`), pendiente de confirmar con multímetro.
 El PCF8574 `0x21` se alimenta a **3.3 V**.
+
+> **Por qué 6 divisores y no 4.** La PCB de interconexión (`Firmware/IDEA_PCB_CONEXIONES.md`) monta los divisores de `P4` y `P5` ya cableados hasta los bornes `S4` y `S5`. Si M5 y M6 se reemplazan por motores con sensor, solo hay que conectar el sensor y habilitar el lazo cerrado en el firmware, sin fabricar otra placa. Con el firmware actual (`BOARD_SENSOR_CHANNEL_COUNT = 4`) esos dos pines se leen pero no se usan.
 
 ### 4.6 Matriz de canales: relés y motores
 
@@ -494,7 +498,9 @@ El PCF8574 `0x21` se alimenta a **3.3 V**.
 | **6** | M6 | LK20052 Fy-007 · 2 hilos | P5 | — | Tiempo · pulso 3.0 s |
 | — | — | — | P6 / P7 | — | No usado |
 
-*El bit del canal en `0x20` se pone en **HIGH (3.3 V)** durante el despacho (el NPN lleva `IN` a 0 V) y vuelve a **LOW (0 V)** al terminar. P6 y P7 permanecen en nivel bajo.*
+*El bit del canal en `0x20` se pone en **HIGH (3.3 V)** durante el despacho (el NPN lleva `IN` a 0 V) y vuelve a **LOW (0 V)** al terminar. `P6`, `P7` e `INT` permanecen sin conectar, igual que `P6`–`P7` e `INT` del `0x21`.*
+
+*En la PCB las salidas se rotulan `M0`–`M5` y las entradas `S0`–`S5`; el firmware numera los canales del 1 al 6. La equivalencia es `M0 = canal 1`, `M1 = canal 2`, …, `M5 = canal 6`.*
 
 ### 4.7 Distribución de borneras y conectores
 
@@ -506,6 +512,7 @@ El PCF8574 `0x21` se alimenta a **3.3 V**.
 | Expand the input pin | JST | IO35 / 3.3 V / GND | Salida del PC817 |
 | Salida de relés | Bornera por canal | COM / NO | Motores |
 | Alimentación de bobinas | Bornera 2 pines | 12 V / GND | Módulo de relés |
+| PCB de interconexión | Placa 100 × 100 mm, 2 capas | `J1` motores · `J2` sensores · `J3` monedero · `J4` I2C | Ver `Firmware/IDEA_PCB_CONEXIONES.md` |
 
 **Figura 9 — Panel TFT ST7796**
 
