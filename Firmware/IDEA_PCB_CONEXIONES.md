@@ -213,6 +213,55 @@ En `cad/` están el DXF/SVG 1:1 del módulo PCF8574 (38 × 16 mm, cabezal `1x9` 
 
 > `J1` y `J2` ya son de **6 y 7 pines** en el esquema y en el PCB (huellas `MKDS-1,5-6` y `MKDS-1,5-7`). El `GND` de los sensores va en el **pin 7**, al final de la bornera.
 
+### 5.1 Conexión de los motores (fuera de la placa)
+
+La placa **no conmuta los motores**: `J1` solo lleva la señal de cada canal a la
+entrada `IN` de su módulo de relé. La potencia se arma aparte, en la bornera del
+módulo:
+
+```
++12 V → fusible → COM del relé → NO → motor (+)
+motor (−) → V− / COM de la fuente de 12 V
+```
+
+Cada motor trae su propio conector en el arnés. **Antes de comprar nada, medir el
+paso entre pines** del conector del motor (centro a centro):
+
+| Paso | Familia | Corriente | ¿Sirve? |
+| :---: | :--- | :---: | :--- |
+| 2.54 mm | Molex KK 254 / JST XH | 3–4 A | Al límite: el arranque llega a 2.5 A |
+| 3.0 mm | Molex Micro-Fit 3.0 | 5 A | Sí |
+| 3.96 mm | Molex KK 396 | 7 A | Sí |
+| 4.2 mm | Molex Mini-Fit Jr | 9 A | Sí, la opción recomendada |
+| 2.0 mm | JST PH | 2 A | **No** |
+
+Si se puede elegir libremente:
+
+| Cant. | Pieza | Para |
+| :---: | :--- | :--- |
+| 4 | Conector de 3 pines (pareja macho/hembra) | M1–M4, con sensor |
+| 2 | Conector de 2 pines (pareja macho/hembra) | M5–M6, sin sensor |
+| — | Terminales de repuesto y crimpadora | Armado del arnés |
+
+Pinout de los conectores de 3 pines:
+
+| Pin | Señal | Destino |
+| :---: | :--- | :--- |
+| 1 | Motor **+12 V** | Contacto **NO** del relé del canal |
+| 2 | Motor **GND** | Borne **V− / COM** de la fuente |
+| 3 | Sensor de posición | Borne `S0`–`S3` de `J2` |
+
+Cable: **18 AWG** para los dos hilos del motor y **22–24 AWG** para el sensor.
+
+> **El hilo del sensor sale a 12 V.** Entra por `J2`, donde está el divisor
+> 10 kΩ / 3.3 kΩ. Conectarlo directo a un GPIO del ESP32 lo destruye.
+>
+> **Polaridad.** Si se invierten los pines 1 y 2, el motor gira al revés. Usar
+> conectores con llave para que no se puedan enchufar invertidos.
+
+Los motores **M5 y M6 no llevan sensor**: su conector es de 2 pines y el despacho
+es por tiempo (3 s).
+
 ---
 
 ## 6. Lista de materiales de la placa
@@ -234,6 +283,9 @@ En `cad/` están el DXF/SVG 1:1 del módulo PCF8574 (38 × 16 mm, cabezal `1x9` 
 | 1 | Bornera | Phoenix 1x07 · 5.08 mm | `J2` sensores |
 | 1 | Bornera | Phoenix 1x02 · 5.08 mm | `J3` monedero |
 | 1 | Bornera | Phoenix 1x04 · 5.08 mm | `J4` I2C |
+
+> Esta lista cubre solo la placa de interconexión. Los módulos de relé y los
+> conectores del arnés de motores no van soldados aquí: ver §5.1 y §3.4.
 
 ---
 
@@ -258,6 +310,7 @@ En `cad/` están el DXF/SVG 1:1 del módulo PCF8574 (38 × 16 mm, cabezal `1x9` 
 
 - [ ] **Sincronizar los nets del PCB.** El `.kicad_pcb` ya tiene las **46 huellas** colocadas (6 NPN, 25 resistencias, 3 capacitores, `J1` 1x06, `J2` 1x07, `J3` 1x02, `J4` 1x04, `H1`–`H4` y las dos parejas `1x04`/`1x09`), pero **sin nets**: falta «Actualizar PCB desde el esquema» y luego rutear.
 - [ ] **Monedero: `IO39` vs `GPIO35`.** El nodo se rotula `IO39 y V1` y en `J3.2` se atornillan juntos el `V1` del CH-926 y el hilo hacia la placa de pantalla. `board_config.h` define `BOARD_COIN_GPIO = GPIO_NUM_35`: unificar el pin antes de armar el arnés.
+- [ ] **Conector del motor:** medir el paso del conector que trae cada motor y comprar la pareja (ver §5.1). Sin ese dato no se puede armar el arnés.
 - [ ] **Serigrafía:** confirmar si se rotula `M0`–`M5` / `S0`–`S5` (como el esquema) o `M1`–`M6` (como el firmware).
 - [ ] **Pines 7, 8 y 9 de ambos expansores** (`P6`, `P7`, `INT`) salen como `unconnected` en el netlist: es intencional. Si el ERC los marca, ponerles bandera de «no conectar».
 - [ ] **Polaridad del sensor:** medir con multímetro la salida en reposo y en movimiento. Confirmar `home = 0 V`.
@@ -291,3 +344,4 @@ En `cad/` están el DXF/SVG 1:1 del módulo PCF8574 (38 × 16 mm, cabezal `1x9` 
 | :--- | :--- |
 | 2026-11-11 | Creación del documento con el alcance cerrado de la PCB de interconexión. |
 | 2026-11-17 | Actualizado al diseño implementado en KiCad: **6 salidas + 6 entradas**, conectores reales (`J1` 1x06, `J2` 1x07, `J3` 1x02, `J4` 1x04), BOM de la placa y mapa de pines verificado contra el netlist del esquema. `GND` de sensores en el pin 7 de `J2`. |
+| 2026-11-24 | Añadida la §5.1 con la conexión física de los motores: potencia por los contactos del relé, conector del arnés y pinout. Nota en el BOM sobre lo que no va en la placa. |

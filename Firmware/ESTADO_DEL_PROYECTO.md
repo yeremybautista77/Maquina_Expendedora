@@ -951,6 +951,39 @@ app_main: Arranque completado. Sistema en espera de monedas.
 Si la pantalla no está conectada, se emite un error y el sistema no arranca la
 GUI; si el `0x21` no responde, los 6 canales pasan a lazo abierto por tiempo.
 
+### Prueba en la placa física (2026-11-22)
+
+Se flasheó el firmware en la placa del prototipo, que apareció como **COM5**
+(USB-Serial CH340):
+
+| Dato | Valor |
+| :--- | :--- |
+| Chip | ESP32-D0WD-V3, revisión v3.1, 4 MB de flash |
+| MAC | `04:b2:47:88:f2:30` |
+| Comando | `.\compilar.ps1 -Flash -Port COM5` (sin `-Erase`) |
+| Escritura | Bootloader, tabla de particiones y app; esptool verificó el hash de los tres |
+
+No se borró la NVS, así que el sistema arrancó con los datos que ya tenía:
+saldo **RD$ 1.00**, stock **10/10/10/3/10/10** y precios
+**RD$ 50/50/50/70/80/90**.
+
+**Lo que arrancó bien** (capturado 30 s por el puerto serie):
+
+- `ST7796 listo (320x480, SPI1, 40 MHz)`, `Tactil XPT2046 listo` y `GUI lista`.
+- Bus I2C en IO32/IO25, tareas del monedero y de la GUI creadas.
+- Sin reinicios ni *panic* durante la captura.
+
+**Lo que faltaba en ese momento** (la placa estaba sin periféricos conectados):
+
+| Mensaje en el log | Significado |
+| :--- | :--- |
+| `PCF8574 de relees NO responde en 0x20` | El bus I2C no tiene la placa de relés conectada. `motor_control` no inicializa y la GUI muestra «Motores no disponibles: conecte los modulos I2C» al confirmar un pedido |
+| `Nivel inicial de IO35: LOW (activo)` y ~125 flancos cada 2 s | IO35 está flotando: no hay monedero ni pull-up de 10 kΩ. La ISR descarta los pulsos por ancho inválido, así que **no se acredita saldo**, pero el pin consume CPU y llena el log |
+
+El sistema queda en **modo degradado**, que es el comportamiento previsto: la GUI
+funciona y el despacho se rechaza con aviso. Para la prueba con chasis hay que
+conectar el bus I2C (SDA IO32, SCL IO25, GND común, 3.3 V) y el monedero.
+
 ### Checklist de puesta en marcha en la placa real
 
 1. **Flashear** con `.\compilar.ps1 -Flash -Port COMx -Monitor`.
@@ -1019,6 +1052,11 @@ GUI; si el `0x21` no responde, los 6 canales pasan a lazo abierto por tiempo.
    las unidades que salieron? (Hoy se cobran solo las entregadas).
 5. ¿Qué producto, precio e imagen van en **P4–P6**? Hoy usan “Producto 4/5/6”
    con RD$ 70/80/90 **provisionales** para pruebas de electrónica.
+6. **Monedero: `IO39` o `GPIO35`.** La PCB rotula el nodo como `IO39 y V1`
+   (`J3.2`), pero `board_config.h` define `BOARD_COIN_GPIO = GPIO_NUM_35`. Si el
+   monedero se conecta en `J3`, el pulso entra por IO39 y el firmware no lo verá.
+   Hay que decidir antes de armar el arnés: cambiar el firmware a `GPIO_NUM_39` o
+   llevar el pulso a IO35 con un hilo aparte. Ver `IDEA_PCB_CONEXIONES.md` §8.
 
 ---
 
