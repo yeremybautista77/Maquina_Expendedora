@@ -3,3 +3,13 @@
 
 # Artefactos de build (ESP-IDF)
 build/
+
+# Respaldos de flash: binarios grandes, se conservan fuera de Git
+backups_firmware/*.bin
+
+# KiCad: archivos locales y respaldos automáticos
+*.lck
+*.kicad_prl
+*.bak_*
+PCB-backups/
+Diseño_electronico/PCB/PCB.zip

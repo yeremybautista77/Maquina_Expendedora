@@ -19,6 +19,10 @@ El funcionamiento es el siguiente:
 motores (M1–M6)**, la pantalla, el táctil y la NVS se validaron físicamente en
 etapas anteriores.
 
+**Fabricación:** gabinete armado y pintado, con el módulo de seis compartimentos,
+los motores y las espirales instalados. Registro fotográfico en
+`Documentacion/Proceso de manufactura/`. La PCB de interconexión está en diseño.
+
 **Implementado:**
 - GUI táctil 2×3 con modal de confirmación y panel inferior de saldo/total. Las
   imágenes de producto van **embebidas en flash** (52×52 RGB565); si falta una,
@@ -127,12 +131,31 @@ El panel está protegido con contraseña y se usa para mantenimiento de la máqu
 
 ```
 Maquina_Expendedora/
-├── Firmware/
+├── Firmware/                         C + ESP-IDF + FreeRTOS
 ├── Diseño_electronico/
+│   ├── ARQUITECTURA_HARDWARE.md      dominios de voltaje, cableado y pines
+│   ├── img/                          figuras del documento
+│   └── PCB/                          KiCad: esquema, PCB y PDFs de fabricación
 ├── Diseño_mecanico/
+│   ├── Chasis/                       piezas y ensamblaje del gabinete
+│   └── motor dc/                     motor, espiral y base
+├── cad/                              referencia 2D del módulo PCF8574
 ├── Documentacion/
-│   ├── Documentacion Tecnica/
-│   │   └── documento_de_arquitectura_tecnico.md
-│   └── Imagenes de manufactura/
-└── Documentacion Proyecto Terminado/
+│   ├── Documentacion Tecnica/        arquitectura del sistema
+│   └── Proceso de manufactura/       registro fotográfico del armado
+├── Documentacion Proyecto Terminado/ entrega final (en preparación)
+└── backups_firmware/                 respaldo local de la flash (no versionado)
 ```
+
+## 📚 Documentación
+
+| Documento | Para qué sirve |
+| :--- | :--- |
+| `Firmware/README.md` | Compilar, flashear y operar el firmware |
+| `Firmware/ESTADO_DEL_PROYECTO.md` | Bitácora técnica: qué está hecho, qué falta y riesgos conocidos |
+| `Firmware/IDEA_PCB_CONEXIONES.md` | Mapa de pines, BOM y reglas de la PCB de interconexión |
+| `Diseño_electronico/ARQUITECTURA_HARDWARE.md` | Voltajes, cableado, protecciones y pines del ESP32 |
+| `Diseño_electronico/PCB/` | Esquema y PCB en KiCad, con PDFs de fabricación |
+| `Diseño_mecanico/README.md` | Inventario de piezas y ensamblajes del chasis |
+| `Documentacion/Documentacion Tecnica/` | Arquitectura del sistema y flujo de una compra |
+| `Documentacion/Proceso de manufactura/` | Fotos del armado del gabinete y del módulo de despacho |
